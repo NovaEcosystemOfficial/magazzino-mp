@@ -2,14 +2,19 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import './App.css'
 import { ArticleDetailView } from './components/ArticleDetailView'
 import { ArticlesImportWizard } from './components/ArticlesImportWizard'
+import { CarichiView } from './components/CarichiView'
 import { SettingsView } from './components/SettingsView'
 import { readArticoliWorkbook } from './excel/readArticoliWorkbook'
 import { loadAllArticles, persistNewArticles } from './storage/articlesDb'
+import { loadAllMovements } from './storage/movementsDb'
 import type {
   ArticoliImportSummary,
   ArticoliSheetData,
   ArticleRecord,
 } from './types/articles'
+import type { StockMovement } from './types/movements'
+import { parseNumericStock } from './excel/articoliMapping'
+import { formatQuantity, todayLocalIsoDate } from './utils/quantity'
 
 type ViewId =
   | 'dashboard'
@@ -247,7 +252,7 @@ function ArticlesView({
                     <td>{row.code}</td>
                     <td>{row.description}</td>
                     <td>{row.unitOfMeasure}</td>
-                    <td>{row.stock}</td>
+                    <td>{row.currentStock}</td>
                     <td>{row.status}</td>
                     <td>
                       <button
@@ -330,6 +335,7 @@ function App() {
   const [isReadingFile, setIsReadingFile] = useState(false)
   const [isSavingImport, setIsSavingImport] = useState(false)
   const [selectedArticleCode, setSelectedArticleCode] = useState<string | null>(null)
+  const [movements, setMovements] = useState<StockMovement[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const currentDate = useMemo(() => formatCurrentDate(new Date()), [])
@@ -353,6 +359,28 @@ function App() {
     [articles],
   )
 
+  const monthPrefix = todayLocalIsoDate().slice(0, 7)
+  const carichiDelPeriodo = useMemo(
+    () =>
+      movements.filter(
+        (movement) => movement.type === 'CARICO' && movement.movementDate.startsWith(monthPrefix),
+      ).length,
+    [movements, monthPrefix],
+  )
+
+  const totalCurrentStock = useMemo(() => {
+    let sum = 0
+    let counted = 0
+    for (const article of articles) {
+      const value = parseNumericStock(article.currentStock)
+      if (value !== null) {
+        sum += value
+        counted += 1
+      }
+    }
+    return counted > 0 ? formatQuantity(sum) : '—'
+  }, [articles])
+
   const dashboardStats = useMemo(
     () => [
       {
@@ -366,13 +394,13 @@ function App() {
       },
       {
         label: 'Valore / quantità delle giacenze',
-        value: '—',
-        note: 'Valori reali da integrare in una fase successiva.',
+        value: isLoadingArticles ? '…' : totalCurrentStock,
+        note: 'Somma delle giacenze operative attuali.',
       },
       {
         label: 'Carichi del periodo',
-        value: '—',
-        note: 'Contatore in attesa di logica di magazzino.',
+        value: isLoadingArticles ? '…' : String(carichiDelPeriodo),
+        note: 'Movimenti CARICO del mese corrente.',
       },
       {
         label: 'Scarichi del periodo',
@@ -380,7 +408,26 @@ function App() {
         note: 'Contatore in attesa di logica di magazzino.',
       },
     ],
-    [articles.length, isLoadingArticles, storageError],
+    [
+      articles.length,
+      isLoadingArticles,
+      storageError,
+      totalCurrentStock,
+      carichiDelPeriodo,
+    ],
+  )
+
+  const selectedArticleMovements = useMemo(() => {
+    if (!selectedArticleCode) {
+      return []
+    }
+    const key = selectedArticleCode.trim().toLowerCase()
+    return movements.filter((movement) => movement.articleId === key)
+  }, [movements, selectedArticleCode])
+
+  const recentCarichi = useMemo(
+    () => movements.filter((movement) => movement.type === 'CARICO'),
+    [movements],
   )
 
   useEffect(() => {
@@ -391,13 +438,18 @@ function App() {
       setStorageError(null)
 
       try {
-        const stored = await loadAllArticles()
+        const [stored, storedMovements] = await Promise.all([
+          loadAllArticles(),
+          loadAllMovements(),
+        ])
         if (!cancelled) {
           setArticles(stored)
+          setMovements(storedMovements)
         }
       } catch (error) {
         if (!cancelled) {
           setArticles([])
+          setMovements([])
           setStorageError(
             error instanceof Error
               ? error.message
@@ -422,6 +474,15 @@ function App() {
     const stored = await loadAllArticles()
     setArticles(stored)
     return stored
+  }
+
+  const refreshWarehouseFromDb = async () => {
+    const [stored, storedMovements] = await Promise.all([
+      loadAllArticles(),
+      loadAllMovements(),
+    ])
+    setArticles(stored)
+    setMovements(storedMovements)
   }
 
   const handleImportClick = () => {
@@ -601,24 +662,31 @@ function App() {
                   <h3 id="attivita-recenti">Attività recenti</h3>
                 </div>
 
-                <div className="empty-state">
-                  <p className="empty-state__message">Nessun movimento registrato.</p>
-                </div>
-
-                <div className="table-wrap" aria-label="Tabella attività recenti vuota">
+                <div className="table-wrap" aria-label="Tabella attività recenti">
                   <table className="activity-table">
                     <thead>
                       <tr>
                         <th scope="col">Data</th>
                         <th scope="col">Operazione</th>
                         <th scope="col">Documento</th>
-                        <th scope="col">Stato</th>
+                        <th scope="col">Articolo</th>
                       </tr>
                     </thead>
                     <tbody>
-                      <tr>
-                        <td colSpan={4}>Nessun movimento registrato.</td>
-                      </tr>
+                      {recentCarichi.length === 0 ? (
+                        <tr>
+                          <td colSpan={4}>Nessun movimento registrato.</td>
+                        </tr>
+                      ) : (
+                        recentCarichi.slice(0, 8).map((movement) => (
+                          <tr key={movement.id}>
+                            <td>{movement.movementDate}</td>
+                            <td>{movement.type}</td>
+                            <td>{movement.documentRef}</td>
+                            <td>{movement.articleCode}</td>
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -662,6 +730,7 @@ function App() {
               <ArticleDetailView
                 article={selectedArticle}
                 requestedCode={selectedArticleCode}
+                movements={selectedArticleMovements}
                 onBack={() => setSelectedArticleCode(null)}
               />
             ) : (
@@ -681,12 +750,18 @@ function App() {
                 onOpenArticle={(code) => setSelectedArticleCode(code)}
               />
             )
+          ) : activeView === 'carichi' ? (
+            <CarichiView
+              articles={articles}
+              recentCarichi={recentCarichi}
+              onRegistered={refreshWarehouseFromDb}
+            />
           ) : activeView === 'impostazioni' ? (
             <SettingsView
               articleCount={articles.length}
               onArticlesReplaced={async () => {
                 try {
-                  await refreshArticlesFromDb()
+                  await refreshWarehouseFromDb()
                   setStorageError(null)
                 } catch (error) {
                   setStorageError(

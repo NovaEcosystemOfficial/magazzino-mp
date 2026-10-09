@@ -225,9 +225,19 @@
 }
 
 .articles-page,
-.settings-page {
+.settings-page,
+.carichi-page {
   display: grid;
   gap: 1rem;
+}
+
+.articles-table__row--selected {
+  background: rgba(62, 112, 91, 0.08);
+}
+
+textarea.field__control {
+  resize: vertical;
+  min-height: 5rem;
 }
 
 .articles-panel {

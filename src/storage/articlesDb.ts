@@ -1,9 +1,11 @@
 import { enrichArticleFromSourceFields } from '../excel/resolveArticleFields'
 import { normalizeArticleRecord, type ArticleRecord } from '../types/articles'
-
-const DB_NAME = 'magazzino-mr'
-const DB_VERSION = 1
-const ARTICLES_STORE = 'articles'
+import {
+  ARTICLES_STORE,
+  openMagazzinoDatabase,
+  requestToPromise,
+  transactionDone,
+} from './db'
 
 export type StoredArticle = ArticleRecord & {
   codeKey: string
@@ -11,55 +13,30 @@ export type StoredArticle = ArticleRecord & {
   updatedAt: string
 }
 
-function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () =>
-      reject(request.error ?? new Error('Operazione IndexedDB non riuscita.'))
-  })
-}
-
-function transactionDone(transaction: IDBTransaction): Promise<void> {
-  return new Promise((resolve, reject) => {
-    transaction.oncomplete = () => resolve()
-    transaction.onerror = () =>
-      reject(transaction.error ?? new Error('Transazione IndexedDB non riuscita.'))
-    transaction.onabort = () =>
-      reject(transaction.error ?? new Error('Transazione IndexedDB annullata.'))
-  })
-}
-
 export function isIndexedDbAvailable(): boolean {
   return typeof indexedDB !== 'undefined'
 }
 
 export async function openArticlesDatabase(): Promise<IDBDatabase> {
-  if (!isIndexedDbAvailable()) {
-    throw new Error('IndexedDB non è disponibile in questo browser.')
-  }
-
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION)
-
-    request.onupgradeneeded = () => {
-      const db = request.result
-      if (!db.objectStoreNames.contains(ARTICLES_STORE)) {
-        const store = db.createObjectStore(ARTICLES_STORE, { keyPath: 'codeKey' })
-        store.createIndex('code', 'code', { unique: false })
-      }
-    }
-
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () =>
-      reject(request.error ?? new Error('Impossibile aprire il database locale.'))
-  })
+  return openMagazzinoDatabase()
 }
 
 function toStoredArticle(article: ArticleRecord, existing?: StoredArticle): StoredArticle {
   const now = new Date().toISOString()
   const enriched = enrichArticleFromSourceFields(normalizeArticleRecord(article))
+
+  // Non azzerare currentStock operativo se già presente sul record esistente.
+  const currentStock =
+    existing &&
+    typeof existing.currentStock === 'string' &&
+    existing.currentStock.trim() &&
+    existing.currentStock.trim() !== '—'
+      ? existing.currentStock.trim()
+      : enriched.currentStock
+
   return {
     ...enriched,
+    currentStock,
     codeKey: enriched.code.trim().toLowerCase(),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
@@ -73,7 +50,13 @@ export function toArticleRecord(stored: StoredArticle): ArticleRecord {
 function articleNeedsEnrichment(stored: StoredArticle): boolean {
   const before = normalizeArticleRecord(stored)
   const after = enrichArticleFromSourceFields(before)
+  const missingCurrent =
+    typeof stored.currentStock !== 'string' ||
+    stored.currentStock.trim() === '' ||
+    stored.currentStock.trim() === '—'
+
   return (
+    missingCurrent ||
     before.stock !== after.stock ||
     before.category !== after.category ||
     before.minStock !== after.minStock ||
@@ -85,10 +68,6 @@ function articleNeedsEnrichment(stored: StoredArticle): boolean {
   )
 }
 
-/**
- * Migrazione compatibile: arricchisce i record esistenti da sourceFields
- * senza cancellare articoli già importati.
- */
 async function migrateEnrichArticlesFromSourceFields(db: IDBDatabase): Promise<void> {
   const readTx = db.transaction(ARTICLES_STORE, 'readonly')
   const readStore = readTx.objectStore(ARTICLES_STORE)
@@ -104,15 +83,23 @@ async function migrateEnrichArticlesFromSourceFields(db: IDBDatabase): Promise<v
   const writeStore = writeTx.objectStore(ARTICLES_STORE)
 
   for (const stored of toUpdate) {
-    const enriched = toStoredArticle(toArticleRecord(stored), stored)
-    writeStore.put(enriched)
+    const normalized = normalizeArticleRecord(stored)
+    const enriched = enrichArticleFromSourceFields(normalized)
+    const withCurrent: ArticleRecord = {
+      ...enriched,
+      currentStock:
+        stored.currentStock && stored.currentStock.trim() && stored.currentStock !== '—'
+          ? stored.currentStock.trim()
+          : enriched.currentStock,
+    }
+    writeStore.put(toStoredArticle(withCurrent, stored))
   }
 
   await transactionDone(writeTx)
 }
 
 export async function loadAllArticles(): Promise<ArticleRecord[]> {
-  const db = await openArticlesDatabase()
+  const db = await openMagazzinoDatabase()
 
   try {
     await migrateEnrichArticlesFromSourceFields(db)
@@ -152,12 +139,6 @@ function preferExisting(current: string, incoming: string): string {
   return '—'
 }
 
-/**
- * Unisce un articolo già presente con i dati in arrivo:
- * - non cancella il record
- * - non sovrascrive campi già valorizzati
- * - arricchisce campi vuoti e unisce sourceFields
- */
 function mergeIncomingIntoExisting(
   existingStored: StoredArticle,
   incoming: ArticleRecord,
@@ -170,6 +151,8 @@ function mergeIncomingIntoExisting(
     description: preferExisting(existing.description, next.description),
     unitOfMeasure: preferExisting(existing.unitOfMeasure, next.unitOfMeasure),
     stock: preferExisting(existing.stock, next.stock),
+    // Giacenza operativa: non sovrascrivere con l'import Excel.
+    currentStock: preferExisting(existing.currentStock, existing.currentStock),
     status: preferExisting(existing.status, next.status),
     category: preferExisting(existing.category, next.category),
     supplier: preferExisting(existing.supplier, next.supplier),
@@ -190,13 +173,8 @@ function storedChanged(before: StoredArticle, after: StoredArticle): boolean {
   return JSON.stringify(left) !== JSON.stringify(right)
 }
 
-/**
- * Inserisce articoli nuovi e arricchisce quelli esistenti senza sovrascrivere
- * i campi già valorizzati. Nessun movimento di magazzino viene creato.
- * Considera riuscito solo se la transazione IndexedDB completa correttamente.
- */
 export async function persistNewArticles(articles: ArticleRecord[]): Promise<PersistArticlesResult> {
-  const db = await openArticlesDatabase()
+  const db = await openMagazzinoDatabase()
 
   try {
     const readTx = db.transaction(ARTICLES_STORE, 'readonly')
@@ -263,12 +241,8 @@ export async function persistNewArticles(articles: ArticleRecord[]): Promise<Per
   }
 }
 
-/**
- * Aggiorna i campi strutturati mancanti da sourceFields per articoli già presenti,
- * senza sostituire valori già valorizzati e senza cancellare record.
- */
 export async function enrichExistingArticlesInPlace(): Promise<number> {
-  const db = await openArticlesDatabase()
+  const db = await openMagazzinoDatabase()
   try {
     await migrateEnrichArticlesFromSourceFields(db)
     const transaction = db.transaction(ARTICLES_STORE, 'readonly')
@@ -282,7 +256,7 @@ export async function enrichExistingArticlesInPlace(): Promise<number> {
 }
 
 export async function replaceAllArticles(articles: ArticleRecord[]): Promise<number> {
-  const db = await openArticlesDatabase()
+  const db = await openMagazzinoDatabase()
 
   try {
     const transaction = db.transaction(ARTICLES_STORE, 'readwrite')

@@ -4,10 +4,13 @@ import {
   enrichArticleFromSourceFields,
 } from '../excel/resolveArticleFields'
 import type { ArticleRecord } from '../types/articles'
+import type { StockMovement } from '../types/movements'
+import { formatLocalDateLabel, formatQuantity } from '../utils/quantity'
 
 type ArticleDetailViewProps = {
   article: ArticleRecord | null
   requestedCode: string
+  movements: StockMovement[]
   onBack: () => void
 }
 
@@ -20,7 +23,12 @@ function DetailField({ label, value }: { label: string; value: string }) {
   )
 }
 
-export function ArticleDetailView({ article, requestedCode, onBack }: ArticleDetailViewProps) {
+export function ArticleDetailView({
+  article,
+  requestedCode,
+  movements,
+  onBack,
+}: ArticleDetailViewProps) {
   if (!article) {
     return (
       <section className="panel panel--placeholder" aria-labelledby="articolo-non-trovato">
@@ -42,14 +50,15 @@ export function ArticleDetailView({ article, requestedCode, onBack }: ArticleDet
   }
 
   const view = enrichArticleFromSourceFields(article)
-  const stockValue = parseNumericStock(view.stock)
+  const currentStockValue = parseNumericStock(view.currentStock)
   const minStockValue = parseNumericStock(view.minStock)
   const isBelowMin =
-    stockValue !== null && minStockValue !== null && stockValue < minStockValue
+    currentStockValue !== null && minStockValue !== null && currentStockValue < minStockValue
 
   const totalReceivedValue = parseNumericStock(view.totalReceived)
   const showTotalReceived = totalReceivedValue !== null
   const savedSummary = buildSavedFieldsSummary(view)
+  const carichi = movements.filter((movement) => movement.type === 'CARICO')
 
   const primaryHeaders = new Set(
     [
@@ -97,7 +106,7 @@ export function ArticleDetailView({ article, requestedCode, onBack }: ArticleDet
         </button>
         {isBelowMin ? (
           <span className="stock-warning" role="status">
-            Giacenza inferiore alla scorta minima
+            Giacenza attuale inferiore alla scorta minima
           </span>
         ) : null}
       </div>
@@ -113,6 +122,7 @@ export function ArticleDetailView({ article, requestedCode, onBack }: ArticleDet
           <DetailField label="Descrizione" value={view.description} />
           <DetailField label="Unità di misura" value={view.unitOfMeasure} />
           <DetailField label="Giacenza iniziale (Excel)" value={view.stock} />
+          <DetailField label="Giacenza attuale" value={view.currentStock} />
           <DetailField label="Stato" value={view.status} />
           <DetailField label="Categoria" value={view.category} />
           <DetailField label="Fornitore abituale" value={view.supplier} />
@@ -131,7 +141,7 @@ export function ArticleDetailView({ article, requestedCode, onBack }: ArticleDet
         {isBelowMin ? (
           <div className="alert alert--warning" role="status">
             <p>
-              Giacenza iniziale ({view.stock}) inferiore alla scorta minima ({view.minStock}).
+              Giacenza attuale ({view.currentStock}) inferiore alla scorta minima ({view.minStock}).
             </p>
           </div>
         ) : null}
@@ -146,6 +156,7 @@ export function ArticleDetailView({ article, requestedCode, onBack }: ArticleDet
           {savedSummary.map((line) => (
             <li key={line}>{line}</li>
           ))}
+          <li>Giacenza attuale: {view.currentStock}</li>
         </ul>
       </div>
 
@@ -168,9 +179,36 @@ export function ArticleDetailView({ article, requestedCode, onBack }: ArticleDet
           <p className="section-heading__eyebrow">Storico</p>
           <h3 id="movimenti-articolo">Movimenti</h3>
         </div>
-        <div className="empty-state">
-          <p className="empty-state__message">Nessun movimento registrato.</p>
-        </div>
+        {carichi.length === 0 ? (
+          <div className="empty-state">
+            <p className="empty-state__message">Nessun movimento registrato.</p>
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table className="activity-table">
+              <thead>
+                <tr>
+                  <th scope="col">Data</th>
+                  <th scope="col">Tipo</th>
+                  <th scope="col">Quantità</th>
+                  <th scope="col">Fornitore</th>
+                  <th scope="col">Documento</th>
+                </tr>
+              </thead>
+              <tbody>
+                {carichi.map((movement) => (
+                  <tr key={movement.id}>
+                    <td>{formatLocalDateLabel(movement.movementDate)}</td>
+                    <td>{movement.type}</td>
+                    <td>{formatQuantity(movement.quantity)}</td>
+                    <td>{movement.supplier}</td>
+                    <td>{movement.documentRef}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </section>
   )

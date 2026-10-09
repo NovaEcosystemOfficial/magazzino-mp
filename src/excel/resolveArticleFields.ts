@@ -126,6 +126,8 @@ export function enrichArticleFromSourceFields(article: ArticleRecord): ArticleRe
     ...article,
     unitOfMeasure: pick(article.unitOfMeasure, 'unitOfMeasure'),
     stock: pick(article.stock, 'stock', { numericOnly: false }),
+    // Giacenza operativa: non ricalcolata dall'Excel; resta quella già presente.
+    currentStock: article.currentStock,
     status: pick(article.status, 'status'),
     category: pick(article.category, 'category'),
     supplier: pick(article.supplier, 'supplier'),

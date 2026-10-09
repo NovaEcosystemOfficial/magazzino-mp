@@ -74,6 +74,7 @@ export function validateBackupPayload(payload: unknown): MagazzinoBackup {
         description: item.description,
         unitOfMeasure: item.unitOfMeasure,
         stock: item.stock,
+        currentStock: typeof item.currentStock === 'string' ? item.currentStock : undefined,
         status: item.status,
         category: typeof item.category === 'string' ? item.category : undefined,
         supplier: typeof item.supplier === 'string' ? item.supplier : undefined,

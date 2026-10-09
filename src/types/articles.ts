@@ -2,8 +2,13 @@ export type ArticleRecord = {
   code: string
   description: string
   unitOfMeasure: string
-  /** Giacenza iniziale storica dal workbook; non è un movimento di magazzino. */
+  /** Giacenza iniziale storica dal workbook; non è un movimento di magazzino e non va alterata dai carichi. */
   stock: string
+  /**
+   * Giacenza operativa attuale.
+   * Parti dalla giacenza Excel e viene aggiornata dai movimenti (es. CARICO).
+   */
+  currentStock: string
   status: string
   category: string
   supplier: string
@@ -109,11 +114,19 @@ export function emptyDisplayValue(value: string | undefined | null): string {
 }
 
 export function normalizeArticleRecord(raw: Partial<ArticleRecord> & { code: string }): ArticleRecord {
+  const stock = emptyDisplayValue(raw.stock)
+  const hasCurrent =
+    typeof raw.currentStock === 'string' &&
+    raw.currentStock.trim().length > 0 &&
+    raw.currentStock.trim() !== '—'
+
   return {
     code: raw.code.trim(),
     description: emptyDisplayValue(raw.description),
     unitOfMeasure: emptyDisplayValue(raw.unitOfMeasure),
-    stock: emptyDisplayValue(raw.stock),
+    stock,
+    // Se assente (record pre-migrazione), parte dalla giacenza Excel storica.
+    currentStock: hasCurrent ? raw.currentStock!.trim() : stock === '—' ? '0' : stock,
     status: emptyDisplayValue(raw.status),
     category: emptyDisplayValue(raw.category),
     supplier: emptyDisplayValue(raw.supplier),
