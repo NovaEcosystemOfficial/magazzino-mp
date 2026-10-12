@@ -8,15 +8,24 @@ import {
 
 type SettingsViewProps = {
   articleCount: number
+  movementCount: number
   onArticlesReplaced: (count: number) => Promise<void> | void
+  /** Riattiva lo splash senza cancellare i dati IndexedDB. */
+  onReenableSplash?: () => void
 }
 
-export function SettingsView({ articleCount, onArticlesReplaced }: SettingsViewProps) {
+export function SettingsView({
+  articleCount,
+  movementCount,
+  onArticlesReplaced,
+  onReenableSplash,
+}: SettingsViewProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isBusy, setIsBusy] = useState(false)
   const [pendingRestoreCount, setPendingRestoreCount] = useState<number | null>(null)
+  const [pendingMovementCount, setPendingMovementCount] = useState<number | null>(null)
   const [pendingRestorePayload, setPendingRestorePayload] = useState<unknown>(null)
 
   const handleExport = async () => {
@@ -28,7 +37,7 @@ export function SettingsView({ articleCount, onArticlesReplaced }: SettingsViewP
       const backup = await createArticlesBackup()
       downloadBackupJson(backup)
       setMessage(
-        `Backup esportato: ${backup.meta.articleCount} articoli (versione ${backup.version}).`,
+        `Backup esportato: ${backup.meta.articleCount} articoli, ${backup.meta.movementCount} movimenti (versione ${backup.version}).`,
       )
     } catch (exportError) {
       setError(
@@ -52,14 +61,16 @@ export function SettingsView({ articleCount, onArticlesReplaced }: SettingsViewP
     setError(null)
     setMessage(null)
     setPendingRestoreCount(null)
+    setPendingMovementCount(null)
     setPendingRestorePayload(null)
 
     try {
       const backup = await parseBackupFile(file)
       setPendingRestorePayload(backup)
       setPendingRestoreCount(backup.articles.length)
+      setPendingMovementCount(backup.movements.length)
       setMessage(
-        `Backup valido del ${new Date(backup.exportedAt).toLocaleString('it-IT')}: ${backup.articles.length} articoli. Conferma per sostituire l’archivio attuale.`,
+        `Backup valido del ${new Date(backup.exportedAt).toLocaleString('it-IT')}: ${backup.articles.length} articoli, ${backup.movements.length} movimenti (v${backup.version}). Conferma per sostituire l’archivio attuale.`,
       )
     } catch (restoreError) {
       setError(
@@ -81,11 +92,14 @@ export function SettingsView({ articleCount, onArticlesReplaced }: SettingsViewP
     setError(null)
 
     try {
-      const count = await restoreArticlesBackup(pendingRestorePayload)
-      await onArticlesReplaced(count)
+      const result = await restoreArticlesBackup(pendingRestorePayload)
+      await onArticlesReplaced(result.articleCount)
       setPendingRestorePayload(null)
       setPendingRestoreCount(null)
-      setMessage(`Ripristino completato: ${count} articoli salvati in IndexedDB.`)
+      setPendingMovementCount(null)
+      setMessage(
+        `Ripristino completato: ${result.articleCount} articoli e ${result.movementCount} movimenti salvati in IndexedDB.`,
+      )
     } catch (restoreError) {
       setError(
         restoreError instanceof Error
@@ -103,8 +117,8 @@ export function SettingsView({ articleCount, onArticlesReplaced }: SettingsViewP
         <p className="section-heading__eyebrow">Archivio locale</p>
         <h3 id="impostazioni-title">Impostazioni</h3>
         <p className="section-heading__description">
-          Backup e ripristino dell&apos;anagrafica salvata in IndexedDB. Articoli attualmente in
-          archivio: <strong>{articleCount}</strong>.
+          Backup e ripristino di anagrafica e movimenti salvati in IndexedDB. Articoli:{' '}
+          <strong>{articleCount}</strong> · Movimenti: <strong>{movementCount}</strong>.
         </p>
       </div>
 
@@ -120,14 +134,32 @@ export function SettingsView({ articleCount, onArticlesReplaced }: SettingsViewP
         </div>
       ) : null}
 
+      {onReenableSplash ? (
+        <div className="panel">
+          <div className="section-heading">
+            <p className="section-heading__eyebrow">Schermata iniziale</p>
+            <h3>Splash screen</h3>
+          </div>
+          <p className="placeholder-text">
+            Per i test: mostra di nuovo lo splash al prossimo ingresso. Non cancella articoli,
+            movimenti o backup. Agisce solo sulla preferenza del browser (localStorage).
+          </p>
+          <div className="placeholder-actions">
+            <button type="button" className="secondary-button" onClick={onReenableSplash}>
+              Mostra splash screen
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="panel">
         <div className="section-heading">
           <p className="section-heading__eyebrow">Backup</p>
           <h3>Esporta JSON versionato</h3>
         </div>
         <p className="placeholder-text">
-          Scarica un file JSON con formato <code>magazzino-mr-backup</code>, versione 1, metadati e
-          anagrafica completa.
+          Scarica un file JSON con formato <code>magazzino-mr-backup</code>, versione 2, metadati,
+          anagrafica e movimenti (carichi/scarichi). I backup v1 restano ripristinabili.
         </p>
         <div className="placeholder-actions">
           <button type="button" className="primary-button" onClick={() => void handleExport()} disabled={isBusy}>
@@ -161,7 +193,8 @@ export function SettingsView({ articleCount, onArticlesReplaced }: SettingsViewP
               onClick={() => void handleConfirmRestore()}
               disabled={isBusy}
             >
-              Conferma ripristino ({pendingRestoreCount} articoli)
+              Conferma ripristino ({pendingRestoreCount} articoli
+              {pendingMovementCount != null ? `, ${pendingMovementCount} movimenti` : ''})
             </button>
           ) : null}
           {pendingRestoreCount != null ? (
@@ -170,6 +203,7 @@ export function SettingsView({ articleCount, onArticlesReplaced }: SettingsViewP
               className="secondary-button"
               onClick={() => {
                 setPendingRestoreCount(null)
+                setPendingMovementCount(null)
                 setPendingRestorePayload(null)
                 setMessage(null)
               }}

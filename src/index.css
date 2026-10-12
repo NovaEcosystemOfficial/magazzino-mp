@@ -1,10 +1,40 @@
 :root {
-  font-family:
-    Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* Design system stile WMS professionale (riferimento NeXseed) */
+  --mr-anthracite: #1f2933;
+  --mr-bg: #f3f4f6;
+  --mr-surface: #ffffff;
+  --mr-primary: #3e705b;
+  --mr-primary-soft: rgba(62, 112, 91, 0.12);
+  --mr-accent-blue: #4b7bec;
+  --mr-accent-blue-soft: rgba(75, 123, 236, 0.12);
+  --mr-accent-orange: #e67e22;
+  --mr-accent-orange-soft: rgba(230, 126, 34, 0.12);
+  --mr-text: #2c3a47;
+  --mr-text-muted: #6b7785;
+  --mr-text-soft: #8a949e;
+  --mr-border: #e5e7eb;
+  --mr-border-strong: #d1d5db;
+  --mr-danger: #c0392b;
+  --mr-danger-bg: rgba(192, 57, 43, 0.08);
+  --mr-danger-border: rgba(192, 57, 43, 0.28);
+  --mr-warning: #b7791f;
+  --mr-warning-bg: rgba(183, 121, 31, 0.1);
+  --mr-warning-border: rgba(183, 121, 31, 0.3);
+  --mr-success-bg: rgba(62, 112, 91, 0.1);
+  --mr-success-border: rgba(62, 112, 91, 0.3);
+  --mr-radius: 0.75rem;
+  --mr-radius-sm: 0.5rem;
+  --mr-shadow: 0 1px 3px rgba(31, 41, 51, 0.06);
+  --mr-shadow-md: 0 4px 14px rgba(31, 41, 51, 0.06);
+  --mr-sidebar-width: 248px;
+  --mr-font:
+    'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+
+  font-family: var(--mr-font);
   line-height: 1.5;
   font-weight: 400;
-  color: #24313d;
-  background: #f5f6f7;
+  color: var(--mr-text);
+  background: var(--mr-bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -26,7 +56,7 @@ body,
 
 body {
   min-width: 320px;
-  background: #f5f6f7;
+  background: var(--mr-bg);
 }
 
 button,
@@ -55,4 +85,8 @@ h3 {
 
 strong {
   font-weight: 600;
+}
+
+code {
+  font-family: ui-monospace, 'Cascadia Code', 'Segoe UI Mono', Consolas, monospace;
 }

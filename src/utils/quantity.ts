@@ -56,6 +56,23 @@ export function addQuantities(current: string, delta: number): string {
   return formatQuantity(start + delta)
 }
 
+export function subtractQuantities(current: string, delta: number): string {
+  if (!Number.isFinite(delta) || delta < 0) {
+    throw new Error('La quantità da sottrarre deve essere numerica e non negativa.')
+  }
+  return addQuantities(current, -delta)
+}
+
+/** True se la giacenza corrente copre la quantità richiesta. */
+export function stockCoversQuantity(currentStock: string, quantity: number): boolean {
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    return false
+  }
+  const base = parseNumericStock(currentStock)
+  const available = base ?? 0
+  return available + 1e-9 >= quantity
+}
+
 export function todayLocalIsoDate(date = new Date()): string {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')

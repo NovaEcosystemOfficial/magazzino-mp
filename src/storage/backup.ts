@@ -1,18 +1,24 @@
 import { normalizeArticleRecord, type ArticleRecord } from '../types/articles'
+import { normalizeStockMovement, type StockMovement } from '../types/movements'
 import { loadAllArticles, replaceAllArticles } from './articlesDb'
+import { loadAllMovements, replaceAllMovements } from './movementsDb'
 
 export const BACKUP_FORMAT = 'magazzino-mr-backup' as const
-export const BACKUP_VERSION = 1 as const
+/** v1: solo articoli. v2: articoli + movimenti (carichi/scarichi). */
+export const BACKUP_VERSION = 2 as const
+export const BACKUP_VERSION_LEGACY = 1 as const
 
 export type MagazzinoBackup = {
   format: typeof BACKUP_FORMAT
-  version: typeof BACKUP_VERSION
+  version: typeof BACKUP_VERSION | typeof BACKUP_VERSION_LEGACY
   exportedAt: string
   meta: {
     articleCount: number
+    movementCount: number
     source: 'indexeddb-local'
   }
   articles: ArticleRecord[]
+  movements: StockMovement[]
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -33,6 +39,25 @@ function isArticleRecord(value: unknown): value is ArticleRecord {
   )
 }
 
+function isMovementRecord(value: unknown): value is StockMovement {
+  if (!isRecord(value)) {
+    return false
+  }
+  return (
+    typeof value.id === 'string' &&
+    (value.type === 'CARICO' || value.type === 'SCARICO') &&
+    typeof value.articleId === 'string' &&
+    typeof value.articleCode === 'string' &&
+    typeof value.quantity === 'number' &&
+    Number.isFinite(value.quantity) &&
+    typeof value.movementDate === 'string' &&
+    typeof value.registeredAt === 'string' &&
+    typeof value.documentRef === 'string' &&
+    typeof value.notes === 'string' &&
+    typeof value.idempotencyKey === 'string'
+  )
+}
+
 export function validateBackupPayload(payload: unknown): MagazzinoBackup {
   if (!isRecord(payload)) {
     throw new Error('Il file di backup non contiene un oggetto JSON valido.')
@@ -42,9 +67,10 @@ export function validateBackupPayload(payload: unknown): MagazzinoBackup {
     throw new Error('Formato backup non riconosciuto. Atteso: magazzino-mr-backup.')
   }
 
-  if (payload.version !== BACKUP_VERSION) {
+  const version = payload.version
+  if (version !== BACKUP_VERSION && version !== BACKUP_VERSION_LEGACY) {
     throw new Error(
-      `Versione backup non supportata (${String(payload.version)}). Supportata: ${BACKUP_VERSION}.`,
+      `Versione backup non supportata (${String(version)}). Supportate: ${BACKUP_VERSION_LEGACY}, ${BACKUP_VERSION}.`,
     )
   }
 
@@ -95,20 +121,51 @@ export function validateBackupPayload(payload: unknown): MagazzinoBackup {
     )
   }
 
+  let movements: StockMovement[] = []
+  if (version === BACKUP_VERSION_LEGACY) {
+    // Compatibilità: backup v1 senza movimenti.
+    movements = []
+  } else if (!Array.isArray(payload.movements)) {
+    throw new Error('Il backup v2 non contiene un elenco movimenti valido.')
+  } else {
+    for (const [index, item] of payload.movements.entries()) {
+      if (!isMovementRecord(item)) {
+        throw new Error(`Movimento non valido alla posizione ${index + 1} del backup.`)
+      }
+      movements.push(
+        normalizeStockMovement({
+          ...item,
+          supplier: typeof item.supplier === 'string' ? item.supplier : '',
+          reason: typeof item.reason === 'string' ? item.reason : '',
+        }),
+      )
+    }
+    if (
+      typeof payload.meta.movementCount === 'number' &&
+      payload.meta.movementCount !== movements.length
+    ) {
+      throw new Error(
+        `Il conteggio movimenti metadati (${payload.meta.movementCount}) non corrisponde ai movimenti (${movements.length}).`,
+      )
+    }
+  }
+
   return {
     format: BACKUP_FORMAT,
-    version: BACKUP_VERSION,
+    version,
     exportedAt: payload.exportedAt,
     meta: {
       articleCount: articles.length,
+      movementCount: movements.length,
       source: 'indexeddb-local',
     },
     articles,
+    movements,
   }
 }
 
 export async function createArticlesBackup(): Promise<MagazzinoBackup> {
-  const articles = await loadAllArticles()
+  const [articles, movements] = await Promise.all([loadAllArticles(), loadAllMovements()])
 
   return {
     format: BACKUP_FORMAT,
@@ -116,9 +173,11 @@ export async function createArticlesBackup(): Promise<MagazzinoBackup> {
     exportedAt: new Date().toISOString(),
     meta: {
       articleCount: articles.length,
+      movementCount: movements.length,
       source: 'indexeddb-local',
     },
     articles,
+    movements,
   }
 }
 
@@ -135,9 +194,16 @@ export function downloadBackupJson(backup: MagazzinoBackup): void {
   URL.revokeObjectURL(url)
 }
 
-export async function restoreArticlesBackup(payload: unknown): Promise<number> {
+export type RestoreBackupResult = {
+  articleCount: number
+  movementCount: number
+}
+
+export async function restoreArticlesBackup(payload: unknown): Promise<RestoreBackupResult> {
   const backup = validateBackupPayload(payload)
-  return replaceAllArticles(backup.articles)
+  const articleCount = await replaceAllArticles(backup.articles)
+  const movementCount = await replaceAllMovements(backup.movements)
+  return { articleCount, movementCount }
 }
 
 export async function parseBackupFile(file: File): Promise<MagazzinoBackup> {

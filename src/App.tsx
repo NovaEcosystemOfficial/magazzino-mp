@@ -3,7 +3,18 @@ import './App.css'
 import { ArticleDetailView } from './components/ArticleDetailView'
 import { ArticlesImportWizard } from './components/ArticlesImportWizard'
 import { CarichiView } from './components/CarichiView'
+import { DdtImportView } from './components/DdtImportView'
+import { DdtRegistryView } from './components/DdtRegistryView'
+import { MovimentiView } from './components/MovimentiView'
+import { ReportView } from './components/ReportView'
+import { ScarichiView } from './components/ScarichiView'
 import { SettingsView } from './components/SettingsView'
+import { SplashScreen } from './components/SplashScreen'
+import {
+  hasSeenSplashScreen,
+  markSplashScreenSeen,
+  resetSplashScreenPreference,
+} from './splash/splashPreference'
 import { readArticoliWorkbook } from './excel/readArticoliWorkbook'
 import { loadAllArticles, persistNewArticles } from './storage/articlesDb'
 import { loadAllMovements } from './storage/movementsDb'
@@ -14,7 +25,8 @@ import type {
 } from './types/articles'
 import type { StockMovement } from './types/movements'
 import { parseNumericStock } from './excel/articoliMapping'
-import { formatQuantity, todayLocalIsoDate } from './utils/quantity'
+import { normalizeUnitForReport } from './report/buildWarehouseReport'
+import { formatLocalDateLabel, formatQuantity, todayLocalIsoDate } from './utils/quantity'
 
 type ViewId =
   | 'dashboard'
@@ -43,6 +55,95 @@ const navigationItems: NavigationItem[] = [
   { id: 'report', label: 'Report' },
   { id: 'impostazioni', label: 'Impostazioni' },
 ]
+
+function NavIcon({ id }: { id: ViewId }) {
+  const common = {
+    className: 'sidebar__link-icon',
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.8,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+    'aria-hidden': true as const,
+  }
+
+  switch (id) {
+    case 'dashboard':
+      return (
+        <svg {...common}>
+          <rect x="3" y="3" width="7" height="9" rx="1.5" />
+          <rect x="14" y="3" width="7" height="5" rx="1.5" />
+          <rect x="14" y="12" width="7" height="9" rx="1.5" />
+          <rect x="3" y="16" width="7" height="5" rx="1.5" />
+        </svg>
+      )
+    case 'articoli':
+      return (
+        <svg {...common}>
+          <path d="M4 7h16v12H4z" />
+          <path d="M8 7V5h8v2" />
+        </svg>
+      )
+    case 'carichi':
+      return (
+        <svg {...common}>
+          <path d="M12 19V5" />
+          <path d="M6 11l6-6 6 6" />
+        </svg>
+      )
+    case 'scarichi':
+      return (
+        <svg {...common}>
+          <path d="M12 5v14" />
+          <path d="M6 13l6 6 6-6" />
+        </svg>
+      )
+    case 'importazione-ddt':
+      return (
+        <svg {...common}>
+          <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+          <path d="M14 3v5h5" />
+        </svg>
+      )
+    case 'movimenti':
+      return (
+        <svg {...common}>
+          <path d="M7 7h13" />
+          <path d="M16 3l4 4-4 4" />
+          <path d="M17 17H4" />
+          <path d="M8 13l-4 4 4 4" />
+        </svg>
+      )
+    case 'registro-ddt':
+      return (
+        <svg {...common}>
+          <path d="M8 6h12" />
+          <path d="M8 12h12" />
+          <path d="M8 18h12" />
+          <path d="M4 6h.01" />
+          <path d="M4 12h.01" />
+          <path d="M4 18h.01" />
+        </svg>
+      )
+    case 'report':
+      return (
+        <svg {...common}>
+          <path d="M4 19V9" />
+          <path d="M10 19V5" />
+          <path d="M16 19v-7" />
+          <path d="M22 19H2" />
+        </svg>
+      )
+    default:
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="3" />
+          <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+        </svg>
+      )
+  }
+}
 
 const quickActions = [
   {
@@ -323,6 +424,7 @@ function PlaceholderView({
 }
 
 function App() {
+  const [showSplash, setShowSplash] = useState(() => !hasSeenSplashScreen())
   const [activeView, setActiveView] = useState<ViewId>('dashboard')
   const [articleCodeQuery, setArticleCodeQuery] = useState('')
   const [articleDescriptionQuery, setArticleDescriptionQuery] = useState('')
@@ -337,6 +439,17 @@ function App() {
   const [selectedArticleCode, setSelectedArticleCode] = useState<string | null>(null)
   const [movements, setMovements] = useState<StockMovement[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleEnterGestionale = () => {
+    markSplashScreenSeen()
+    setShowSplash(false)
+    setActiveView('dashboard')
+  }
+
+  const handleReenableSplashForTesting = () => {
+    resetSplashScreenPreference()
+    setShowSplash(true)
+  }
 
   const currentDate = useMemo(() => formatCurrentDate(new Date()), [])
   const selectedArticle = useMemo(() => {
@@ -368,17 +481,39 @@ function App() {
     [movements, monthPrefix],
   )
 
-  const totalCurrentStock = useMemo(() => {
-    let sum = 0
-    let counted = 0
+  const scarichiDelPeriodo = useMemo(
+    () =>
+      movements.filter(
+        (movement) => movement.type === 'SCARICO' && movement.movementDate.startsWith(monthPrefix),
+      ).length,
+    [movements, monthPrefix],
+  )
+
+  const belowMinCount = useMemo(() => {
+    let count = 0
     for (const article of articles) {
-      const value = parseNumericStock(article.currentStock)
-      if (value !== null) {
-        sum += value
-        counted += 1
+      const current = parseNumericStock(article.currentStock)
+      const min = parseNumericStock(article.minStock)
+      if (current !== null && min !== null && current < min) {
+        count += 1
       }
     }
-    return counted > 0 ? formatQuantity(sum) : '—'
+    return count
+  }, [articles])
+
+  const stockByUnit = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const article of articles) {
+      const value = parseNumericStock(article.currentStock)
+      if (value === null) {
+        continue
+      }
+      const unit = normalizeUnitForReport(article.unitOfMeasure)
+      map.set(unit, (map.get(unit) ?? 0) + value)
+    }
+    return [...map.entries()]
+      .map(([unit, quantity]) => ({ unit, quantityLabel: formatQuantity(quantity) }))
+      .sort((a, b) => a.unit.localeCompare(b.unit))
   }, [articles])
 
   const dashboardStats = useMemo(
@@ -391,29 +526,37 @@ function App() {
           : articles.length === 0
             ? 'Archivio locale vuoto.'
             : 'Conteggio reale da IndexedDB.',
+        accent: 'accent-blue' as const,
       },
       {
-        label: 'Valore / quantità delle giacenze',
-        value: isLoadingArticles ? '…' : totalCurrentStock,
-        note: 'Somma delle giacenze operative attuali.',
+        label: 'Sotto scorta minima',
+        value: isLoadingArticles ? '…' : String(belowMinCount),
+        note:
+          belowMinCount > 0
+            ? 'Articoli con giacenza inferiore alla soglia configurata.'
+            : 'Nessun articolo sotto soglia (o soglie non configurate).',
+        accent: 'accent-orange' as const,
       },
       {
         label: 'Carichi del periodo',
         value: isLoadingArticles ? '…' : String(carichiDelPeriodo),
         note: 'Movimenti CARICO del mese corrente.',
+        accent: 'accent-green' as const,
       },
       {
         label: 'Scarichi del periodo',
-        value: '—',
-        note: 'Contatore in attesa di logica di magazzino.',
+        value: isLoadingArticles ? '…' : String(scarichiDelPeriodo),
+        note: 'Movimenti SCARICO del mese corrente.',
+        accent: 'accent-slate' as const,
       },
     ],
     [
       articles.length,
       isLoadingArticles,
       storageError,
-      totalCurrentStock,
+      belowMinCount,
       carichiDelPeriodo,
+      scarichiDelPeriodo,
     ],
   )
 
@@ -429,6 +572,13 @@ function App() {
     () => movements.filter((movement) => movement.type === 'CARICO'),
     [movements],
   )
+
+  const recentScarichi = useMemo(
+    () => movements.filter((movement) => movement.type === 'SCARICO'),
+    [movements],
+  )
+
+  const recentMovements = useMemo(() => movements.slice(0, 8), [movements])
 
   useEffect(() => {
     let cancelled = false
@@ -567,14 +717,18 @@ function App() {
     }
   }
 
+  if (showSplash) {
+    return <SplashScreen onEnter={handleEnterGestionale} />
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="Navigazione principale">
         <div className="sidebar__brand">
           <span className="sidebar__brand-mark" aria-hidden="true" />
           <div>
-            <p className="sidebar__eyebrow">Gestione aziendale</p>
-            <h1 className="sidebar__title">MAGAZZINO MR</h1>
+            <p className="sidebar__eyebrow">Materie Prime</p>
+            <h1 className="sidebar__title">MAGAZZINO MP</h1>
           </div>
         </div>
 
@@ -592,7 +746,8 @@ function App() {
               }}
               aria-current={item.id === activeView ? 'page' : undefined}
             >
-              {item.label}
+              <NavIcon id={item.id} />
+              <span>{item.label}</span>
             </button>
           ))}
         </nav>
@@ -602,14 +757,17 @@ function App() {
           <p className="sidebar__footer-value">
             {isLoadingArticles ? 'Caricamento…' : `${articles.length} articoli`}
           </p>
+          <span className="sidebar__footer-badge">MP · IndexedDB</span>
         </div>
       </aside>
 
       <div className="content">
         <header className="topbar">
           <div>
-            <p className="topbar__eyebrow">Sezione corrente</p>
             <h2 className="topbar__title">{title}</h2>
+            <p className="topbar__eyebrow">
+              {isDashboard ? 'Panoramica operativa e analitica' : 'Sezione corrente'}
+            </p>
           </div>
 
           <div className="topbar__meta" aria-label="Informazioni pagina">
@@ -647,12 +805,64 @@ function App() {
 
                 <div className="card-grid__items">
                   {dashboardStats.map((card) => (
-                    <article key={card.label} className="summary-card">
+                    <article
+                      key={card.label}
+                      className={`summary-card summary-card--${card.accent}`}
+                    >
                       <p className="summary-card__label">{card.label}</p>
                       <strong className="summary-card__value">{card.value}</strong>
                       <p className="summary-card__note">{card.note}</p>
                     </article>
                   ))}
+                </div>
+              </section>
+
+              {!isLoadingArticles && belowMinCount > 0 ? (
+                <div className="alert alert--warning" role="status">
+                  <p>
+                    Avviso operativo:{' '}
+                    <span className="status-pill status-pill--warning">Sotto scorta</span>{' '}
+                    {belowMinCount} articol{belowMinCount === 1 ? 'o' : 'i'} sotto la scorta minima.
+                    Consultare Report o le schede articolo per i dettagli.
+                  </p>
+                </div>
+              ) : null}
+
+              <section className="panel" aria-labelledby="giacenze-udm">
+                <div className="section-heading">
+                  <p className="section-heading__eyebrow">Giacenze</p>
+                  <h3 id="giacenze-udm">Riepilogo per unità di misura</h3>
+                  <p className="section-heading__description">
+                    Totali attuali separati per UdM (normalizzate solo in visualizzazione).
+                  </p>
+                </div>
+                <div className="table-wrap" aria-label="Giacenze per unità di misura">
+                  <table className="activity-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Unità di misura</th>
+                        <th scope="col">Giacenza attuale</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {isLoadingArticles ? (
+                        <tr>
+                          <td colSpan={2}>Caricamento…</td>
+                        </tr>
+                      ) : stockByUnit.length === 0 ? (
+                        <tr>
+                          <td colSpan={2}>Nessuna giacenza numerica disponibile.</td>
+                        </tr>
+                      ) : (
+                        stockByUnit.map((row) => (
+                          <tr key={row.unit}>
+                            <td>{row.unit}</td>
+                            <td className="numeric-cell">{row.quantityLabel}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
                 </div>
               </section>
 
@@ -673,16 +883,30 @@ function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {recentCarichi.length === 0 ? (
+                      {recentMovements.length === 0 ? (
                         <tr>
                           <td colSpan={4}>Nessun movimento registrato.</td>
                         </tr>
                       ) : (
-                        recentCarichi.slice(0, 8).map((movement) => (
+                        recentMovements.map((movement) => (
                           <tr key={movement.id}>
-                            <td>{movement.movementDate}</td>
-                            <td>{movement.type}</td>
-                            <td>{movement.documentRef}</td>
+                            <td>{formatLocalDateLabel(movement.movementDate)}</td>
+                            <td>
+                              <span
+                                className={
+                                  movement.type === 'CARICO'
+                                    ? 'status-pill status-pill--carico'
+                                    : 'status-pill status-pill--scarico'
+                                }
+                              >
+                                {movement.type}
+                              </span>
+                            </td>
+                            <td>
+                              {movement.documentRef ||
+                                (movement.type === 'SCARICO' ? movement.reason : movement.supplier) ||
+                                '—'}
+                            </td>
                             <td>{movement.articleCode}</td>
                           </tr>
                         ))
@@ -756,9 +980,24 @@ function App() {
               recentCarichi={recentCarichi}
               onRegistered={refreshWarehouseFromDb}
             />
+          ) : activeView === 'scarichi' ? (
+            <ScarichiView
+              articles={articles}
+              recentScarichi={recentScarichi}
+              onRegistered={refreshWarehouseFromDb}
+            />
+          ) : activeView === 'movimenti' ? (
+            <MovimentiView movements={movements} articles={articles} />
+          ) : activeView === 'importazione-ddt' ? (
+            <DdtImportView articles={articles} onRegistered={refreshWarehouseFromDb} />
+          ) : activeView === 'registro-ddt' ? (
+            <DdtRegistryView movements={movements} articles={articles} />
+          ) : activeView === 'report' ? (
+            <ReportView articles={articles} movements={movements} />
           ) : activeView === 'impostazioni' ? (
             <SettingsView
               articleCount={articles.length}
+              movementCount={movements.length}
               onArticlesReplaced={async () => {
                 try {
                   await refreshWarehouseFromDb()
@@ -771,6 +1010,7 @@ function App() {
                   )
                 }
               }}
+              onReenableSplash={handleReenableSplashForTesting}
             />
           ) : (
             <PlaceholderView title={title} onBackToDashboard={() => setActiveView('dashboard')} />

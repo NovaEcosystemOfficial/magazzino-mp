@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Artefatti locali di analisi DDT (il PDF di test può restare in fixtures/)
+fixtures/*-items.json
+fixtures/*-raw.txt
+fixtures/*.txt
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

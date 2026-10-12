@@ -58,8 +58,6 @@ export function ArticleDetailView({
   const totalReceivedValue = parseNumericStock(view.totalReceived)
   const showTotalReceived = totalReceivedValue !== null
   const savedSummary = buildSavedFieldsSummary(view)
-  const carichi = movements.filter((movement) => movement.type === 'CARICO')
-
   const primaryHeaders = new Set(
     [
       'codice',
@@ -179,7 +177,7 @@ export function ArticleDetailView({
           <p className="section-heading__eyebrow">Storico</p>
           <h3 id="movimenti-articolo">Movimenti</h3>
         </div>
-        {carichi.length === 0 ? (
+        {movements.length === 0 ? (
           <div className="empty-state">
             <p className="empty-state__message">Nessun movimento registrato.</p>
           </div>
@@ -191,18 +189,32 @@ export function ArticleDetailView({
                   <th scope="col">Data</th>
                   <th scope="col">Tipo</th>
                   <th scope="col">Quantità</th>
-                  <th scope="col">Fornitore</th>
+                  <th scope="col">Causale / Fornitore</th>
                   <th scope="col">Documento</th>
                 </tr>
               </thead>
               <tbody>
-                {carichi.map((movement) => (
+                {movements.map((movement) => (
                   <tr key={movement.id}>
                     <td>{formatLocalDateLabel(movement.movementDate)}</td>
-                    <td>{movement.type}</td>
-                    <td>{formatQuantity(movement.quantity)}</td>
-                    <td>{movement.supplier}</td>
-                    <td>{movement.documentRef}</td>
+                    <td>
+                      <span
+                        className={
+                          movement.type === 'CARICO'
+                            ? 'status-pill status-pill--carico'
+                            : 'status-pill status-pill--scarico'
+                        }
+                      >
+                        {movement.type}
+                      </span>
+                    </td>
+                    <td className="numeric-cell">{formatQuantity(movement.quantity)}</td>
+                    <td>
+                      {movement.type === 'SCARICO'
+                        ? movement.reason || '—'
+                        : movement.supplier || '—'}
+                    </td>
+                    <td>{movement.documentRef || '—'}</td>
                   </tr>
                 ))}
               </tbody>
