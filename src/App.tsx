@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import './App.css'
+import { BRAND_DEFINITIONS, getBrandLabel, type BrandId } from './brands/brands'
+import { getActiveBrandId, setActiveBrandId } from './brands/brandPreference'
 import { ArticleDetailView } from './components/ArticleDetailView'
 import { ArticlesImportWizard } from './components/ArticlesImportWizard'
 import { CarichiView } from './components/CarichiView'
@@ -27,6 +29,7 @@ import type { StockMovement } from './types/movements'
 import { parseNumericStock } from './excel/articoliMapping'
 import { normalizeUnitForReport } from './report/buildWarehouseReport'
 import { formatLocalDateLabel, formatQuantity, todayLocalIsoDate } from './utils/quantity'
+import { reconcileArticlesWithMovements } from './utils/stockBalance'
 
 type ViewId =
   | 'dashboard'
@@ -425,6 +428,7 @@ function PlaceholderView({
 
 function App() {
   const [showSplash, setShowSplash] = useState(() => !hasSeenSplashScreen())
+  const [activeBrandId, setActiveBrandIdState] = useState<BrandId>(() => getActiveBrandId())
   const [activeView, setActiveView] = useState<ViewId>('dashboard')
   const [articleCodeQuery, setArticleCodeQuery] = useState('')
   const [articleDescriptionQuery, setArticleDescriptionQuery] = useState('')
@@ -439,6 +443,7 @@ function App() {
   const [selectedArticleCode, setSelectedArticleCode] = useState<string | null>(null)
   const [movements, setMovements] = useState<StockMovement[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const activeBrandLabel = getBrandLabel(activeBrandId)
 
   const handleEnterGestionale = () => {
     markSplashScreenSeen()
@@ -589,11 +594,11 @@ function App() {
 
       try {
         const [stored, storedMovements] = await Promise.all([
-          loadAllArticles(),
-          loadAllMovements(),
+          loadAllArticles(activeBrandId),
+          loadAllMovements(activeBrandId),
         ])
         if (!cancelled) {
-          setArticles(stored)
+          setArticles(reconcileArticlesWithMovements(stored, storedMovements))
           setMovements(storedMovements)
         }
       } catch (error) {
@@ -618,21 +623,40 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [activeBrandId])
 
   const refreshArticlesFromDb = async () => {
-    const stored = await loadAllArticles()
-    setArticles(stored)
-    return stored
+    const [stored, storedMovements] = await Promise.all([
+      loadAllArticles(activeBrandId),
+      loadAllMovements(activeBrandId),
+    ])
+    const reconciled = reconcileArticlesWithMovements(stored, storedMovements)
+    setArticles(reconciled)
+    setMovements(storedMovements)
+    return reconciled
   }
 
   const refreshWarehouseFromDb = async () => {
     const [stored, storedMovements] = await Promise.all([
-      loadAllArticles(),
-      loadAllMovements(),
+      loadAllArticles(activeBrandId),
+      loadAllMovements(activeBrandId),
     ])
-    setArticles(stored)
+    setArticles(reconcileArticlesWithMovements(stored, storedMovements))
     setMovements(storedMovements)
+  }
+
+  const handleBrandChange = (brandId: BrandId) => {
+    if (brandId === activeBrandId) {
+      return
+    }
+    setActiveBrandId(brandId)
+    setActiveBrandIdState(brandId)
+    setSelectedArticleCode(null)
+    setImportSheetData(null)
+    setImportError(null)
+    setImportSummary(null)
+    setArticleCodeQuery('')
+    setArticleDescriptionQuery('')
   }
 
   const handleImportClick = () => {
@@ -675,7 +699,7 @@ function App() {
     setImportError(null)
 
     try {
-      const persistResult = await persistNewArticles(importedArticles)
+      const persistResult = await persistNewArticles(importedArticles, activeBrandId)
       const stored = await refreshArticlesFromDb()
       const sampleSaved = persistResult.added[0] ?? persistResult.enrichedExisting[0]
       const sampleSummary = sampleSaved
@@ -753,11 +777,26 @@ function App() {
         </nav>
 
         <div className="sidebar__footer">
-          <p className="sidebar__footer-label">Archivio locale</p>
+          <label className="sidebar__footer-label" htmlFor="active-brand-select">
+            Brand attivo
+          </label>
+          <select
+            id="active-brand-select"
+            className="field__control sidebar__brand-select"
+            value={activeBrandId}
+            onChange={(event) => handleBrandChange(event.target.value as BrandId)}
+            disabled={isLoadingArticles || isSavingImport}
+          >
+            {BRAND_DEFINITIONS.map((brand) => (
+              <option key={brand.id} value={brand.id}>
+                {brand.label}
+              </option>
+            ))}
+          </select>
           <p className="sidebar__footer-value">
             {isLoadingArticles ? 'Caricamento…' : `${articles.length} articoli`}
           </p>
-          <span className="sidebar__footer-badge">MP · IndexedDB</span>
+          <span className="sidebar__footer-badge">{activeBrandLabel} · IndexedDB</span>
         </div>
       </aside>
 
@@ -772,7 +811,7 @@ function App() {
 
           <div className="topbar__meta" aria-label="Informazioni pagina">
             <span>{currentDate}</span>
-            <span className="topbar__badge">Archivio locale</span>
+            <span className="topbar__badge">{activeBrandLabel}</span>
           </div>
         </header>
 
@@ -989,7 +1028,11 @@ function App() {
           ) : activeView === 'movimenti' ? (
             <MovimentiView movements={movements} articles={articles} />
           ) : activeView === 'importazione-ddt' ? (
-            <DdtImportView articles={articles} onRegistered={refreshWarehouseFromDb} />
+            <DdtImportView
+              articles={articles}
+              activeBrandId={activeBrandId}
+              onRegistered={refreshWarehouseFromDb}
+            />
           ) : activeView === 'registro-ddt' ? (
             <DdtRegistryView movements={movements} articles={articles} />
           ) : activeView === 'report' ? (

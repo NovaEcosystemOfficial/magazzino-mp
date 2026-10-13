@@ -226,6 +226,13 @@
   color: var(--mr-primary);
 }
 
+.sidebar__brand-select {
+  width: 100%;
+  margin: 0.35rem 0 0.55rem;
+  font-size: 0.85rem;
+  padding: 0.45rem 0.55rem;
+}
+
 .sidebar__footer {
   margin-top: auto;
   padding: 0.85rem 0.9rem;

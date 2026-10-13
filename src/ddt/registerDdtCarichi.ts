@@ -1,3 +1,4 @@
+import type { BrandId } from '../brands/brands'
 import {
   formatDdtAlreadyRegisteredMessage,
   type DdtDocumentIdentity,
@@ -36,6 +37,8 @@ export type DdtRegistrationInput = {
   fileName: string
   header: DdtHeaderFields
   rows: DdtEditableRow[]
+  /** Archivio brand su cui registrare i carichi (obbligatorio per isolamento). */
+  brandId: BrandId
 }
 
 export type DdtRegistrationResult = {
@@ -97,7 +100,8 @@ export async function registerDdtCarichi(
     throw new Error('Fornitore obbligatorio prima della registrazione.')
   }
 
-  const existingForDocument = await findCarichiForDdtDocument(identity)
+  const brandId = input.brandId
+  const existingForDocument = await findCarichiForDdtDocument(identity, brandId)
   if (existingForDocument.length > 0) {
     const message = formatDdtAlreadyRegisteredMessage(identity, existingForDocument.length)
     return {
@@ -150,15 +154,18 @@ export async function registerDdtCarichi(
       row.manualNotes.trim() ? `Note: ${row.manualNotes.trim()}` : '',
     ].filter(Boolean)
 
-    const result = await registerCarico({
-      articleCode: row.matchedArticleCode!,
-      quantity: row.quantity!,
-      movementDate: documentDateIso,
-      supplier,
-      documentRef: documentNumber,
-      notes: notesParts.join(' · '),
-      idempotencyKey,
-    })
+    const result = await registerCarico(
+      {
+        articleCode: row.matchedArticleCode!,
+        quantity: row.quantity!,
+        movementDate: documentDateIso,
+        supplier,
+        documentRef: documentNumber,
+        notes: notesParts.join(' · '),
+        idempotencyKey,
+      },
+      brandId,
+    )
 
     results.push(result)
     if (result.alreadyApplied) {

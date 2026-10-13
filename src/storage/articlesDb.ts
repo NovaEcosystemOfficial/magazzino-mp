@@ -1,3 +1,4 @@
+import type { BrandId } from '../brands/brands'
 import { enrichArticleFromSourceFields } from '../excel/resolveArticleFields'
 import { normalizeArticleRecord, type ArticleRecord } from '../types/articles'
 import {
@@ -17,8 +18,8 @@ export function isIndexedDbAvailable(): boolean {
   return typeof indexedDB !== 'undefined'
 }
 
-export async function openArticlesDatabase(): Promise<IDBDatabase> {
-  return openMagazzinoDatabase()
+export async function openArticlesDatabase(brandId?: BrandId): Promise<IDBDatabase> {
+  return openMagazzinoDatabase(brandId)
 }
 
 function toStoredArticle(article: ArticleRecord, existing?: StoredArticle): StoredArticle {
@@ -98,8 +99,8 @@ async function migrateEnrichArticlesFromSourceFields(db: IDBDatabase): Promise<v
   await transactionDone(writeTx)
 }
 
-export async function loadAllArticles(): Promise<ArticleRecord[]> {
-  const db = await openMagazzinoDatabase()
+export async function loadAllArticles(brandId?: BrandId): Promise<ArticleRecord[]> {
+  const db = await openMagazzinoDatabase(brandId)
 
   try {
     await migrateEnrichArticlesFromSourceFields(db)
@@ -173,8 +174,11 @@ function storedChanged(before: StoredArticle, after: StoredArticle): boolean {
   return JSON.stringify(left) !== JSON.stringify(right)
 }
 
-export async function persistNewArticles(articles: ArticleRecord[]): Promise<PersistArticlesResult> {
-  const db = await openMagazzinoDatabase()
+export async function persistNewArticles(
+  articles: ArticleRecord[],
+  brandId?: BrandId,
+): Promise<PersistArticlesResult> {
+  const db = await openMagazzinoDatabase(brandId)
 
   try {
     const readTx = db.transaction(ARTICLES_STORE, 'readonly')
@@ -241,8 +245,8 @@ export async function persistNewArticles(articles: ArticleRecord[]): Promise<Per
   }
 }
 
-export async function enrichExistingArticlesInPlace(): Promise<number> {
-  const db = await openMagazzinoDatabase()
+export async function enrichExistingArticlesInPlace(brandId?: BrandId): Promise<number> {
+  const db = await openMagazzinoDatabase(brandId)
   try {
     await migrateEnrichArticlesFromSourceFields(db)
     const transaction = db.transaction(ARTICLES_STORE, 'readonly')
@@ -255,8 +259,11 @@ export async function enrichExistingArticlesInPlace(): Promise<number> {
   }
 }
 
-export async function replaceAllArticles(articles: ArticleRecord[]): Promise<number> {
-  const db = await openMagazzinoDatabase()
+export async function replaceAllArticles(
+  articles: ArticleRecord[],
+  brandId?: BrandId,
+): Promise<number> {
+  const db = await openMagazzinoDatabase(brandId)
 
   try {
     const transaction = db.transaction(ARTICLES_STORE, 'readwrite')

@@ -1,24 +1,42 @@
+import {
+  BRAND_DEFINITIONS,
+  BRAND_IDS,
+  DEFAULT_BRAND_ID,
+  isBrandId,
+  type BrandId,
+} from '../brands/brands'
 import { normalizeArticleRecord, type ArticleRecord } from '../types/articles'
 import { normalizeStockMovement, type StockMovement } from '../types/movements'
+import { reconcileArticlesWithMovements } from '../utils/stockBalance'
 import { loadAllArticles, replaceAllArticles } from './articlesDb'
 import { loadAllMovements, replaceAllMovements } from './movementsDb'
 
 export const BACKUP_FORMAT = 'magazzino-mr-backup' as const
-/** v1: solo articoli. v2: articoli + movimenti (carichi/scarichi). */
-export const BACKUP_VERSION = 2 as const
+/** v1: solo articoli (MR). v2: articoli + movimenti (MR). v3: archivi per tutti i brand. */
+export const BACKUP_VERSION = 3 as const
+export const BACKUP_VERSION_V2 = 2 as const
 export const BACKUP_VERSION_LEGACY = 1 as const
+
+export type BrandArchive = {
+  articles: ArticleRecord[]
+  movements: StockMovement[]
+}
 
 export type MagazzinoBackup = {
   format: typeof BACKUP_FORMAT
-  version: typeof BACKUP_VERSION | typeof BACKUP_VERSION_LEGACY
+  version: typeof BACKUP_VERSION | typeof BACKUP_VERSION_V2 | typeof BACKUP_VERSION_LEGACY
   exportedAt: string
   meta: {
     articleCount: number
     movementCount: number
     source: 'indexeddb-local'
+    brands?: BrandId[]
   }
+  /** Compatibilità v1/v2 e riepilogo MR in v3. */
   articles: ArticleRecord[]
   movements: StockMovement[]
+  /** Presente dalla v3: un archivio indipendente per brand. */
+  archives?: Partial<Record<BrandId, BrandArchive>>
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -58,41 +76,17 @@ function isMovementRecord(value: unknown): value is StockMovement {
   )
 }
 
-export function validateBackupPayload(payload: unknown): MagazzinoBackup {
-  if (!isRecord(payload)) {
-    throw new Error('Il file di backup non contiene un oggetto JSON valido.')
+function parseArticlesArray(raw: unknown, label: string): ArticleRecord[] {
+  if (!Array.isArray(raw)) {
+    throw new Error(`${label}: elenco articoli non valido.`)
   }
-
-  if (payload.format !== BACKUP_FORMAT) {
-    throw new Error('Formato backup non riconosciuto. Atteso: magazzino-mr-backup.')
-  }
-
-  const version = payload.version
-  if (version !== BACKUP_VERSION && version !== BACKUP_VERSION_LEGACY) {
-    throw new Error(
-      `Versione backup non supportata (${String(version)}). Supportate: ${BACKUP_VERSION_LEGACY}, ${BACKUP_VERSION}.`,
-    )
-  }
-
-  if (typeof payload.exportedAt !== 'string' || !payload.exportedAt.trim()) {
-    throw new Error('Metadato exportedAt mancante o non valido.')
-  }
-
-  if (!isRecord(payload.meta) || typeof payload.meta.articleCount !== 'number') {
-    throw new Error('Metadati del backup incompleti o non validi.')
-  }
-
-  if (!Array.isArray(payload.articles)) {
-    throw new Error('Il backup non contiene un elenco articoli valido.')
-  }
-
   const articles: ArticleRecord[] = []
-  for (const [index, item] of payload.articles.entries()) {
+  for (const [index, item] of raw.entries()) {
     if (!isArticleRecord(item)) {
-      throw new Error(`Articolo non valido alla posizione ${index + 1} del backup.`)
+      throw new Error(`${label}: articolo non valido alla posizione ${index + 1}.`)
     }
     if (!item.code.trim()) {
-      throw new Error(`Articolo alla posizione ${index + 1} senza codice.`)
+      throw new Error(`${label}: articolo alla posizione ${index + 1} senza codice.`)
     }
     articles.push(
       normalizeArticleRecord({
@@ -114,7 +108,120 @@ export function validateBackupPayload(payload: unknown): MagazzinoBackup {
       }),
     )
   }
+  return articles
+}
 
+function parseMovementsArray(raw: unknown, label: string): StockMovement[] {
+  if (!Array.isArray(raw)) {
+    throw new Error(`${label}: elenco movimenti non valido.`)
+  }
+  const movements: StockMovement[] = []
+  for (const [index, item] of raw.entries()) {
+    if (!isMovementRecord(item)) {
+      throw new Error(`${label}: movimento non valido alla posizione ${index + 1}.`)
+    }
+    movements.push(
+      normalizeStockMovement({
+        ...item,
+        supplier: typeof item.supplier === 'string' ? item.supplier : '',
+        reason: typeof item.reason === 'string' ? item.reason : '',
+      }),
+    )
+  }
+  return movements
+}
+
+export function validateBackupPayload(payload: unknown): MagazzinoBackup {
+  if (!isRecord(payload)) {
+    throw new Error('Il file di backup non contiene un oggetto JSON valido.')
+  }
+
+  if (payload.format !== BACKUP_FORMAT) {
+    throw new Error('Formato backup non riconosciuto. Atteso: magazzino-mr-backup.')
+  }
+
+  const version = payload.version
+  if (
+    version !== BACKUP_VERSION &&
+    version !== BACKUP_VERSION_V2 &&
+    version !== BACKUP_VERSION_LEGACY
+  ) {
+    throw new Error(
+      `Versione backup non supportata (${String(version)}). Supportate: ${BACKUP_VERSION_LEGACY}, ${BACKUP_VERSION_V2}, ${BACKUP_VERSION}.`,
+    )
+  }
+
+  if (typeof payload.exportedAt !== 'string' || !payload.exportedAt.trim()) {
+    throw new Error('Metadato exportedAt mancante o non valido.')
+  }
+
+  if (!isRecord(payload.meta) || typeof payload.meta.articleCount !== 'number') {
+    throw new Error('Metadati del backup incompleti o non validi.')
+  }
+
+  if (version === BACKUP_VERSION) {
+    if (!isRecord(payload.archives)) {
+      throw new Error('Il backup v3 non contiene la mappa archives per brand.')
+    }
+
+    const archives: Partial<Record<BrandId, BrandArchive>> = {}
+    let totalArticles = 0
+    let totalMovements = 0
+    const presentBrands: BrandId[] = []
+
+    for (const brandId of BRAND_IDS) {
+      const rawArchive = payload.archives[brandId]
+      if (rawArchive == null) {
+        archives[brandId] = { articles: [], movements: [] }
+        presentBrands.push(brandId)
+        continue
+      }
+      if (!isRecord(rawArchive)) {
+        throw new Error(`Archivio brand “${brandId}” non valido.`)
+      }
+      const articles = parseArticlesArray(rawArchive.articles, `Brand ${brandId}`)
+      const movements = parseMovementsArray(rawArchive.movements, `Brand ${brandId}`)
+      archives[brandId] = { articles, movements }
+      totalArticles += articles.length
+      totalMovements += movements.length
+      presentBrands.push(brandId)
+    }
+
+    // Compatibilità flat: preferisci marina-raphael, altrimenti somma già calcolata in meta.
+    const mr = archives[DEFAULT_BRAND_ID] ?? { articles: [], movements: [] }
+
+    if (payload.meta.articleCount !== totalArticles) {
+      throw new Error(
+        `Il conteggio metadati articoli (${payload.meta.articleCount}) non corrisponde al totale archivi (${totalArticles}).`,
+      )
+    }
+    if (
+      typeof payload.meta.movementCount === 'number' &&
+      payload.meta.movementCount !== totalMovements
+    ) {
+      throw new Error(
+        `Il conteggio metadati movimenti (${payload.meta.movementCount}) non corrisponde al totale archivi (${totalMovements}).`,
+      )
+    }
+
+    return {
+      format: BACKUP_FORMAT,
+      version: BACKUP_VERSION,
+      exportedAt: payload.exportedAt,
+      meta: {
+        articleCount: totalArticles,
+        movementCount: totalMovements,
+        source: 'indexeddb-local',
+        brands: presentBrands,
+      },
+      articles: mr.articles,
+      movements: mr.movements,
+      archives,
+    }
+  }
+
+  // v1 / v2 → solo Marina Raphael (archivi flat).
+  const articles = parseArticlesArray(payload.articles, 'Backup')
   if (payload.meta.articleCount !== articles.length) {
     throw new Error(
       `Il conteggio metadati (${payload.meta.articleCount}) non corrisponde agli articoli (${articles.length}).`,
@@ -123,23 +230,9 @@ export function validateBackupPayload(payload: unknown): MagazzinoBackup {
 
   let movements: StockMovement[] = []
   if (version === BACKUP_VERSION_LEGACY) {
-    // Compatibilità: backup v1 senza movimenti.
     movements = []
-  } else if (!Array.isArray(payload.movements)) {
-    throw new Error('Il backup v2 non contiene un elenco movimenti valido.')
   } else {
-    for (const [index, item] of payload.movements.entries()) {
-      if (!isMovementRecord(item)) {
-        throw new Error(`Movimento non valido alla posizione ${index + 1} del backup.`)
-      }
-      movements.push(
-        normalizeStockMovement({
-          ...item,
-          supplier: typeof item.supplier === 'string' ? item.supplier : '',
-          reason: typeof item.reason === 'string' ? item.reason : '',
-        }),
-      )
-    }
+    movements = parseMovementsArray(payload.movements, 'Backup')
     if (
       typeof payload.meta.movementCount === 'number' &&
       payload.meta.movementCount !== movements.length
@@ -158,26 +251,47 @@ export function validateBackupPayload(payload: unknown): MagazzinoBackup {
       articleCount: articles.length,
       movementCount: movements.length,
       source: 'indexeddb-local',
+      brands: [DEFAULT_BRAND_ID],
     },
     articles,
     movements,
+    archives: {
+      [DEFAULT_BRAND_ID]: { articles, movements },
+    },
   }
 }
 
 export async function createArticlesBackup(): Promise<MagazzinoBackup> {
-  const [articles, movements] = await Promise.all([loadAllArticles(), loadAllMovements()])
+  const archives: Partial<Record<BrandId, BrandArchive>> = {}
+  let totalArticles = 0
+  let totalMovements = 0
+
+  for (const brand of BRAND_DEFINITIONS) {
+    const [rawArticles, movements] = await Promise.all([
+      loadAllArticles(brand.id),
+      loadAllMovements(brand.id),
+    ])
+    const articles = reconcileArticlesWithMovements(rawArticles, movements)
+    archives[brand.id] = { articles, movements }
+    totalArticles += articles.length
+    totalMovements += movements.length
+  }
+
+  const mr = archives[DEFAULT_BRAND_ID] ?? { articles: [], movements: [] }
 
   return {
     format: BACKUP_FORMAT,
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
     meta: {
-      articleCount: articles.length,
-      movementCount: movements.length,
+      articleCount: totalArticles,
+      movementCount: totalMovements,
       source: 'indexeddb-local',
+      brands: [...BRAND_IDS],
     },
-    articles,
-    movements,
+    articles: mr.articles,
+    movements: mr.movements,
+    archives,
   }
 }
 
@@ -189,7 +303,7 @@ export function downloadBackupJson(backup: MagazzinoBackup): void {
   const stamp = backup.exportedAt.slice(0, 19).replace(/[:T]/g, '-')
   const anchor = document.createElement('a')
   anchor.href = url
-  anchor.download = `magazzino-mr-backup-v${backup.version}-${stamp}.json`
+  anchor.download = `magazzino-mp-backup-v${backup.version}-${stamp}.json`
   anchor.click()
   URL.revokeObjectURL(url)
 }
@@ -197,13 +311,69 @@ export function downloadBackupJson(backup: MagazzinoBackup): void {
 export type RestoreBackupResult = {
   articleCount: number
   movementCount: number
+  /** Brand effettivamente scritti. */
+  brandsRestored: BrandId[]
+  /** True se il backup legacy ha toccato solo Marina Raphael. */
+  marinaRaphaelOnly: boolean
 }
 
+export type RestoreScope = {
+  brandsToReplace: BrandId[]
+  marinaRaphaelOnly: boolean
+  /** Messaggio da mostrare prima della conferma esplicita. */
+  overwriteWarning: string
+}
+
+/**
+ * Determina quali archivi verrebbero sovrascritti, senza toccare IndexedDB.
+ * - v3 → tutti e tre i brand
+ * - v1/v2 → solo Marina Raphael (ES/SW intatti)
+ */
+export function getRestoreScope(backup: MagazzinoBackup): RestoreScope {
+  if (backup.version === BACKUP_VERSION) {
+    return {
+      brandsToReplace: [...BRAND_IDS],
+      marinaRaphaelOnly: false,
+      overwriteWarning:
+        'Sostituirà gli archivi di tutti e tre i brand (Marina Raphael, ELIE SAAB, Swarovski).',
+    }
+  }
+  return {
+    brandsToReplace: [DEFAULT_BRAND_ID],
+    marinaRaphaelOnly: true,
+    overwriteWarning:
+      'Backup legacy: sostituirà solo Marina Raphael; ELIE SAAB e Swarovski restano intatti.',
+  }
+}
+
+/**
+ * Ripristino:
+ * - v3: sostituisce ogni brand presente in archives (archivi vuoti azzerano quel brand).
+ * - v1/v2: sostituisce solo Marina Raphael; ELIE SAAB e Swarovski restano intatti.
+ */
 export async function restoreArticlesBackup(payload: unknown): Promise<RestoreBackupResult> {
   const backup = validateBackupPayload(payload)
-  const articleCount = await replaceAllArticles(backup.articles)
-  const movementCount = await replaceAllMovements(backup.movements)
-  return { articleCount, movementCount }
+  const scope = getRestoreScope(backup)
+  let articleCount = 0
+  let movementCount = 0
+
+  for (const brandId of scope.brandsToReplace) {
+    const archive =
+      backup.version === BACKUP_VERSION
+        ? (backup.archives?.[brandId] ?? { articles: [], movements: [] })
+        : { articles: backup.articles, movements: backup.movements }
+    const a = await replaceAllArticles(archive.articles, brandId)
+    const m = await replaceAllMovements(archive.movements, brandId)
+    articleCount += a
+    movementCount += m
+  }
+
+  return {
+    articleCount,
+    movementCount,
+    brandsRestored: [...scope.brandsToReplace],
+    marinaRaphaelOnly: scope.marinaRaphaelOnly,
+  }
 }
 
 export async function parseBackupFile(file: File): Promise<MagazzinoBackup> {
@@ -222,4 +392,12 @@ export async function parseBackupFile(file: File): Promise<MagazzinoBackup> {
   }
 
   return validateBackupPayload(parsed)
+}
+
+/** Utility test: verifica che un id brand sia noto. */
+export function assertKnownBrandId(value: string): BrandId {
+  if (!isBrandId(value)) {
+    throw new Error(`Brand sconosciuto: ${value}`)
+  }
+  return value
 }

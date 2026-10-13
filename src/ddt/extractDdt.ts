@@ -1,4 +1,5 @@
 import type { DdtExtractionResult, DdtExtractionSource } from '../types/ddt'
+import { detectBrandFromDocumentText } from './detectBrand'
 import { extractTextItemsFromPdf } from './pdfExtract'
 import { extractHeaderFields, parseDdtFromPlainText, parseDdtFromTextItems } from './parseDdt'
 
@@ -126,6 +127,20 @@ export async function extractDdtFromPdf(options: ExtractDdtOptions): Promise<Ddt
 
   onProgress?.({ phase: 'Completato', progress: 1 })
 
+  const brandDetection = detectBrandFromDocumentText(plainText)
+  const allWarnings = [...warnings, ...parsed.warnings]
+  if (brandDetection.suggestedBrandId) {
+    allWarnings.push(
+      `Brand proposto dal documento: ${brandDetection.evidence}. Verificare prima della registrazione.`,
+    )
+  } else if (brandDetection.supplierOnlyHint) {
+    allWarnings.push(
+      `Rilevato ${brandDetection.supplierOnlyHint}: selezionare manualmente il brand (non confondere fornitore e brand).`,
+    )
+  } else {
+    allWarnings.push('Brand non riconosciuto nel documento: selezionarlo manualmente prima della registrazione.')
+  }
+
   return {
     fileName,
     pageCount,
@@ -133,6 +148,9 @@ export async function extractDdtFromPdf(options: ExtractDdtOptions): Promise<Ddt
     rawText: plainText,
     header: parsed.header,
     lines: parsed.lines,
-    warnings: [...new Set([...warnings, ...parsed.warnings])],
+    warnings: [...new Set(allWarnings)],
+    suggestedBrandId: brandDetection.suggestedBrandId,
+    brandEvidence: brandDetection.evidence,
+    brandConfidence: brandDetection.confidence,
   }
 }

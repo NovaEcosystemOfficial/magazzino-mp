@@ -1,3 +1,5 @@
+import type { BrandId } from '../brands/brands'
+
 export type DdtExtractionSource = 'text' | 'ocr' | 'mixed'
 
 export type DdtTextItem = {
@@ -37,6 +39,10 @@ export type DdtExtractionResult = {
   header: DdtHeaderFields
   lines: DdtExtractedLine[]
   warnings: string[]
+  /** Brand proposto dal testo (non confondere con fornitore). */
+  suggestedBrandId: BrandId | null
+  brandEvidence: string
+  brandConfidence: 'high' | 'medium' | 'none'
 }
 
 export type DdtMatchStatus = 'matched' | 'da_verificare' | 'excluded'

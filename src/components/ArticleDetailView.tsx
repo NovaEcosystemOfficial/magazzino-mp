@@ -6,6 +6,7 @@ import {
 import type { ArticleRecord } from '../types/articles'
 import type { StockMovement } from '../types/movements'
 import { formatLocalDateLabel, formatQuantity } from '../utils/quantity'
+import { buildArticleStockBalance } from '../utils/stockBalance'
 
 type ArticleDetailViewProps = {
   article: ArticleRecord | null
@@ -50,13 +51,16 @@ export function ArticleDetailView({
   }
 
   const view = enrichArticleFromSourceFields(article)
-  const currentStockValue = parseNumericStock(view.currentStock)
+  const balance = buildArticleStockBalance(view.stock, movements)
+  const currentStockValue = balance.currentStockValue
   const minStockValue = parseNumericStock(view.minStock)
   const isBelowMin =
-    currentStockValue !== null && minStockValue !== null && currentStockValue < minStockValue
+    Number.isFinite(currentStockValue) &&
+    minStockValue !== null &&
+    currentStockValue < minStockValue
 
-  const totalReceivedValue = parseNumericStock(view.totalReceived)
-  const showTotalReceived = totalReceivedValue !== null
+  const workbookTotalReceivedValue = parseNumericStock(view.totalReceived)
+  const showWorkbookTotalReceived = workbookTotalReceivedValue !== null
   const savedSummary = buildSavedFieldsSummary(view)
   const primaryHeaders = new Set(
     [
@@ -120,26 +124,31 @@ export function ArticleDetailView({
           <DetailField label="Descrizione" value={view.description} />
           <DetailField label="Unità di misura" value={view.unitOfMeasure} />
           <DetailField label="Giacenza iniziale (Excel)" value={view.stock} />
-          <DetailField label="Giacenza attuale" value={view.currentStock} />
+          <DetailField label="Totale entrate" value={balance.totalInLabel} />
+          <DetailField label="Totale uscite" value={balance.totalOutLabel} />
+          <DetailField label="Giacenza attuale" value={balance.currentStock} />
           <DetailField label="Stato" value={view.status} />
           <DetailField label="Categoria" value={view.category} />
           <DetailField label="Fornitore abituale" value={view.supplier} />
           <DetailField label="Scorta minima" value={view.minStock} />
-          {showTotalReceived ? (
-            <DetailField label="Totale entrate (ricevuto)" value={view.totalReceived} />
+          {showWorkbookTotalReceived ? (
+            <DetailField
+              label="Totale entrate workbook (storico)"
+              value={view.totalReceived}
+            />
           ) : null}
         </dl>
 
-        {showTotalReceived ? (
-          <p className="helper-text">
-            Il totale entrate è un dato storico del workbook e non viene conteggiato come nuovo carico.
-          </p>
-        ) : null}
+        <p className="helper-text">
+          Giacenza attuale = giacenza iniziale + totale entrate − totale uscite (dai movimenti
+          registrati). Il totale entrate workbook resta un dato storico Excel e non entra nel
+          calcolo operativo.
+        </p>
 
         {isBelowMin ? (
           <div className="alert alert--warning" role="status">
             <p>
-              Giacenza attuale ({view.currentStock}) inferiore alla scorta minima ({view.minStock}).
+              Giacenza attuale ({balance.currentStock}) inferiore alla scorta minima ({view.minStock}).
             </p>
           </div>
         ) : null}
@@ -154,7 +163,9 @@ export function ArticleDetailView({
           {savedSummary.map((line) => (
             <li key={line}>{line}</li>
           ))}
-          <li>Giacenza attuale: {view.currentStock}</li>
+          <li>Giacenza attuale: {balance.currentStock}</li>
+          <li>Totale entrate (movimenti): {balance.totalInLabel}</li>
+          <li>Totale uscite (movimenti): {balance.totalOutLabel}</li>
         </ul>
       </div>
 

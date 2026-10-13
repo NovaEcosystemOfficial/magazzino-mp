@@ -1,4 +1,9 @@
-import { useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import {
+  BRAND_DEFINITIONS,
+  getBrandLabel,
+  type BrandId,
+} from '../brands/brands'
 import {
   formatDdtAlreadyRegisteredMessage,
 } from '../ddt/ddtDocumentIdentity'
@@ -9,6 +14,7 @@ import {
   headerToDdtIdentity,
   registerDdtCarichi,
 } from '../ddt/registerDdtCarichi'
+import { loadAllArticles } from '../storage/articlesDb'
 import { findCarichiForDdtDocument } from '../storage/movementsDb'
 import type { ArticleRecord } from '../types/articles'
 import type { DdtEditableRow, DdtHeaderFields, DdtImportSummary } from '../types/ddt'
@@ -20,7 +26,9 @@ import {
 } from '../utils/quantity'
 
 type DdtImportViewProps = {
+  /** Articoli del brand attivo in App (fallback iniziale). */
   articles: ArticleRecord[]
+  activeBrandId: BrandId
   onRegistered: () => Promise<void> | void
 }
 
@@ -42,7 +50,7 @@ function isoToItalian(value: string): string {
   return `${match[3]}/${match[2]}/${match[1]}`
 }
 
-export function DdtImportView({ articles, onRegistered }: DdtImportViewProps) {
+export function DdtImportView({ articles, activeBrandId, onRegistered }: DdtImportViewProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const savingLockRef = useRef(false)
 
@@ -66,11 +74,24 @@ export function DdtImportView({ articles, onRegistered }: DdtImportViewProps) {
   const [summary, setSummary] = useState<DdtImportSummary | null>(null)
   const [articleSearchByRow, setArticleSearchByRow] = useState<Record<string, string>>({})
   const [documentDuplicateWarning, setDocumentDuplicateWarning] = useState<string | null>(null)
+  const [selectedBrandId, setSelectedBrandId] = useState<BrandId>(activeBrandId)
+  const [brandArticles, setBrandArticles] = useState<ArticleRecord[]>(articles)
+  const [brandEvidence, setBrandEvidence] = useState('')
+  const [isLoadingBrandArticles, setIsLoadingBrandArticles] = useState(false)
+  const pendingLinesRef = useRef<Parameters<typeof matchExtractedLinesToArticles>[0] | null>(null)
 
   const { registrable, blocked } = useMemo(() => getRegistrableRows(rows), [rows])
   const includedCount = rows.filter((row) => row.included).length
 
-  const refreshDocumentDuplicateWarning = async (nextHeader: DdtHeaderFields) => {
+  useEffect(() => {
+    setSelectedBrandId(activeBrandId)
+    setBrandArticles(articles)
+  }, [activeBrandId, articles])
+
+  const refreshDocumentDuplicateWarning = async (
+    nextHeader: DdtHeaderFields,
+    brandId: BrandId = selectedBrandId,
+  ) => {
     const identity = headerToDdtIdentity(nextHeader)
     if (
       !identity.documentNumber ||
@@ -81,7 +102,7 @@ export function DdtImportView({ articles, onRegistered }: DdtImportViewProps) {
       return null
     }
     try {
-      const existing = await findCarichiForDdtDocument(identity)
+      const existing = await findCarichiForDdtDocument(identity, brandId)
       if (existing.length === 0) {
         setDocumentDuplicateWarning(null)
         return null
@@ -94,6 +115,33 @@ export function DdtImportView({ articles, onRegistered }: DdtImportViewProps) {
       setDocumentDuplicateWarning(null)
       return null
     }
+  }
+
+  const loadBrandArticlesAndRematch = async (
+    brandId: BrandId,
+    lines: Parameters<typeof matchExtractedLinesToArticles>[0] | null,
+  ) => {
+    setIsLoadingBrandArticles(true)
+    try {
+      const loaded =
+        brandId === activeBrandId ? articles : await loadAllArticles(brandId)
+      setBrandArticles(loaded)
+      if (lines) {
+        setRows(matchExtractedLinesToArticles(lines, loaded))
+        setArticleSearchByRow({})
+      }
+      return loaded
+    } finally {
+      setIsLoadingBrandArticles(false)
+    }
+  }
+
+  const handleBrandChange = async (brandId: BrandId) => {
+    setSelectedBrandId(brandId)
+    setError(null)
+    setStep((current) => (current === 'confirm' ? 'review' : current))
+    await loadBrandArticlesAndRematch(brandId, pendingLinesRef.current)
+    await refreshDocumentDuplicateWarning(header, brandId)
   }
 
   const resetSoft = () => {
@@ -115,6 +163,10 @@ export function DdtImportView({ articles, onRegistered }: DdtImportViewProps) {
     setSummary(null)
     setArticleSearchByRow({})
     setDocumentDuplicateWarning(null)
+    setSelectedBrandId(activeBrandId)
+    setBrandArticles(articles)
+    setBrandEvidence('')
+    pendingLinesRef.current = null
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
@@ -139,26 +191,26 @@ export function DdtImportView({ articles, onRegistered }: DdtImportViewProps) {
         },
       })
 
-      const matched = matchExtractedLinesToArticles(result.lines, articles)
+      const proposedBrand = result.suggestedBrandId ?? activeBrandId
+      pendingLinesRef.current = result.lines
+      setSelectedBrandId(proposedBrand)
+      setBrandEvidence(result.brandEvidence)
+      const brandArts = await loadBrandArticlesAndRematch(proposedBrand, result.lines)
       setFileName(result.fileName)
       setFileBuffer(buffer)
-      setHeader({
+      const nextHeader = {
         documentNumber: result.header.documentNumber,
         documentDate: result.header.documentDate || isoToItalian(result.header.documentDateIso),
         documentDateIso: result.header.documentDateIso || italianToIso(result.header.documentDate),
         supplier: result.header.supplier,
-      })
-      setRows(matched)
+      }
+      setHeader(nextHeader)
+      setRows(matchExtractedLinesToArticles(result.lines, brandArts))
       setExtractionWarnings(result.warnings)
       setExtractionSource(result.source)
       setStep('review')
       setProgressLabel(null)
-      await refreshDocumentDuplicateWarning({
-        documentNumber: result.header.documentNumber,
-        documentDate: result.header.documentDate || isoToItalian(result.header.documentDateIso),
-        documentDateIso: result.header.documentDateIso || italianToIso(result.header.documentDate),
-        supplier: result.header.supplier,
-      })
+      await refreshDocumentDuplicateWarning(nextHeader, proposedBrand)
     } catch (extractError) {
       setError(
         extractError instanceof Error
@@ -253,6 +305,7 @@ export function DdtImportView({ articles, onRegistered }: DdtImportViewProps) {
     header.documentNumber.trim().length > 0 &&
     /^\d{4}-\d{2}-\d{2}$/.test(header.documentDateIso) &&
     header.supplier.trim().length > 0 &&
+    Boolean(selectedBrandId) &&
     registrable.length > 0 &&
     blocked.length === 0
 
@@ -262,11 +315,11 @@ export function DdtImportView({ articles, onRegistered }: DdtImportViewProps) {
       if (!canPrepareConfirm) {
         setError(
           blocked[0]?.reason ??
-            'Completare numero DDT, data, fornitore e associazioni articolo prima del riepilogo.',
+            'Completare brand, numero DDT, data, fornitore e associazioni articolo prima del riepilogo.',
         )
         return
       }
-      const duplicateMessage = await refreshDocumentDuplicateWarning(header)
+      const duplicateMessage = await refreshDocumentDuplicateWarning(header, selectedBrandId)
       if (duplicateMessage) {
         setError(duplicateMessage)
         return
@@ -288,6 +341,7 @@ export function DdtImportView({ articles, onRegistered }: DdtImportViewProps) {
         fileName,
         header,
         rows,
+        brandId: selectedBrandId,
       })
       await onRegistered()
       setSummary(result.summary)
@@ -298,7 +352,7 @@ export function DdtImportView({ articles, onRegistered }: DdtImportViewProps) {
         setStep('review')
       } else {
         setSuccess(
-          `Registrazione completata: ${result.summary.registered} nuovi carichi` +
+          `Registrazione completata su ${getBrandLabel(selectedBrandId)}: ${result.summary.registered} nuovi carichi` +
             (result.summary.skippedAlreadyApplied
               ? `, ${result.summary.skippedAlreadyApplied} già presenti (idempotenza).`
               : '.'),
@@ -438,6 +492,29 @@ export function DdtImportView({ articles, onRegistered }: DdtImportViewProps) {
 
             <div className="mapping-grid">
               <label className="field">
+                <span className="field__label">Brand archivio *</span>
+                <select
+                  className="field__control"
+                  value={selectedBrandId}
+                  disabled={isExtracting || isSaving || isLoadingBrandArticles || step === 'done'}
+                  onChange={(event) => {
+                    void handleBrandChange(event.target.value as BrandId)
+                  }}
+                >
+                  {BRAND_DEFINITIONS.map((brand) => (
+                    <option key={brand.id} value={brand.id}>
+                      {brand.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="helper-text" style={{ gridColumn: '1 / -1' }}>
+                Il brand determina l&apos;anagrafica usata per l&apos;abbinamento e l&apos;archivio
+                in cui verranno registrati i carichi. Non confondere il brand con il fornitore.
+                {brandEvidence ? ` Rilevato nel documento: ${brandEvidence}.` : ''}
+                {isLoadingBrandArticles ? ' Caricamento anagrafica brand…' : ` Articoli brand: ${brandArticles.length}.`}
+              </p>
+              <label className="field">
                 <span className="field__label">Numero DDT *</span>
                 <input
                   type="text"
@@ -527,7 +604,7 @@ export function DdtImportView({ articles, onRegistered }: DdtImportViewProps) {
                       const suggestions =
                         q.length < 1
                           ? []
-                          : articles
+                          : brandArticles
                               .filter(
                                 (article) =>
                                   article.code.toLowerCase().includes(q) ||
@@ -682,6 +759,10 @@ export function DdtImportView({ articles, onRegistered }: DdtImportViewProps) {
           </div>
 
           <dl className="detail-grid">
+            <div className="detail-field">
+              <dt className="detail-field__label">Brand archivio</dt>
+              <dd className="detail-field__value">{getBrandLabel(selectedBrandId)}</dd>
+            </div>
             <div className="detail-field">
               <dt className="detail-field__label">File</dt>
               <dd className="detail-field__value">{fileName}</dd>

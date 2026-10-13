@@ -2,6 +2,7 @@ import { useRef, useState, type ChangeEvent } from 'react'
 import {
   createArticlesBackup,
   downloadBackupJson,
+  getRestoreScope,
   parseBackupFile,
   restoreArticlesBackup,
 } from '../storage/backup'
@@ -37,7 +38,11 @@ export function SettingsView({
       const backup = await createArticlesBackup()
       downloadBackupJson(backup)
       setMessage(
-        `Backup esportato: ${backup.meta.articleCount} articoli, ${backup.meta.movementCount} movimenti (versione ${backup.version}).`,
+        `Backup esportato: ${backup.meta.articleCount} articoli, ${backup.meta.movementCount} movimenti` +
+          (backup.meta.brands?.length
+            ? ` su ${backup.meta.brands.length} brand`
+            : '') +
+          ` (versione ${backup.version}).`,
       )
     } catch (exportError) {
       setError(
@@ -66,11 +71,12 @@ export function SettingsView({
 
     try {
       const backup = await parseBackupFile(file)
+      const scope = getRestoreScope(backup)
       setPendingRestorePayload(backup)
-      setPendingRestoreCount(backup.articles.length)
-      setPendingMovementCount(backup.movements.length)
+      setPendingRestoreCount(backup.meta.articleCount)
+      setPendingMovementCount(backup.meta.movementCount)
       setMessage(
-        `Backup valido del ${new Date(backup.exportedAt).toLocaleString('it-IT')}: ${backup.articles.length} articoli, ${backup.movements.length} movimenti (v${backup.version}). Conferma per sostituire l’archivio attuale.`,
+        `Backup valido del ${new Date(backup.exportedAt).toLocaleString('it-IT')}: ${backup.meta.articleCount} articoli, ${backup.meta.movementCount} movimenti (v${backup.version}). ${scope.overwriteWarning} Conferma per procedere.`,
       )
     } catch (restoreError) {
       setError(
@@ -98,7 +104,10 @@ export function SettingsView({
       setPendingRestoreCount(null)
       setPendingMovementCount(null)
       setMessage(
-        `Ripristino completato: ${result.articleCount} articoli e ${result.movementCount} movimenti salvati in IndexedDB.`,
+        `Ripristino completato: ${result.articleCount} articoli e ${result.movementCount} movimenti` +
+          (result.marinaRaphaelOnly
+            ? ' (solo Marina Raphael).'
+            : ` su ${result.brandsRestored.length} brand.`),
       )
     } catch (restoreError) {
       setError(
@@ -158,8 +167,9 @@ export function SettingsView({
           <h3>Esporta JSON versionato</h3>
         </div>
         <p className="placeholder-text">
-          Scarica un file JSON con formato <code>magazzino-mr-backup</code>, versione 2, metadati,
-          anagrafica e movimenti (carichi/scarichi). I backup v1 restano ripristinabili.
+          Scarica un file JSON con formato <code>magazzino-mr-backup</code>, versione 3, con gli
+          archivi di Marina Raphael, ELIE SAAB e Swarovski (articoli + movimenti). I backup v1/v2
+          restano ripristinabili (solo Marina Raphael).
         </p>
         <div className="placeholder-actions">
           <button type="button" className="primary-button" onClick={() => void handleExport()} disabled={isBusy}>
@@ -174,8 +184,8 @@ export function SettingsView({
           <h3>Ripristina da backup</h3>
         </div>
         <p className="placeholder-text">
-          Il file viene validato prima della scrittura. La sostituzione dell&apos;archivio richiede
-          conferma esplicita e avviene solo se IndexedDB completa la transazione.
+          Il file viene validato prima della scrittura. La conferma è obbligatoria. Un backup v3
+          sostituisce tutti i brand; un backup v1/v2 sostituisce solo Marina Raphael.
         </p>
         <div className="placeholder-actions">
           <button

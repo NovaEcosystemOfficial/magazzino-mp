@@ -1,3 +1,4 @@
+import type { BrandId } from '../brands/brands'
 import {
   findMovementsForDdtDocument,
   type DdtDocumentIdentity,
@@ -8,7 +9,8 @@ import {
   type ScaricoInput,
   type StockMovement,
 } from '../types/movements'
-import { addQuantities, stockCoversQuantity, subtractQuantities } from '../utils/quantity'
+import { stockCoversQuantity } from '../utils/quantity'
+import { computeCurrentStock } from '../utils/stockBalance'
 import type { StoredArticle } from './articlesDb'
 import { toArticleRecord } from './articlesDb'
 import {
@@ -26,6 +28,15 @@ function createId(): string {
   return `mov-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
+async function loadArticleMovementsInStore(
+  movementsStore: IDBObjectStore,
+  articleId: string,
+): Promise<StockMovement[]> {
+  const index = movementsStore.index('articleId')
+  const rows = await requestToPromise(index.getAll(articleId) as IDBRequest<StockMovement[]>)
+  return rows.map((row) => normalizeStockMovement(row))
+}
+
 function sortMovements(rows: StockMovement[]): StockMovement[] {
   return rows.sort((a, b) => {
     const byDate = b.movementDate.localeCompare(a.movementDate)
@@ -36,8 +47,8 @@ function sortMovements(rows: StockMovement[]): StockMovement[] {
   })
 }
 
-export async function loadAllMovements(): Promise<StockMovement[]> {
-  const db = await openMagazzinoDatabase()
+export async function loadAllMovements(brandId?: BrandId): Promise<StockMovement[]> {
+  const db = await openMagazzinoDatabase(brandId)
   try {
     const tx = db.transaction(MOVEMENTS_STORE, 'readonly')
     const store = tx.objectStore(MOVEMENTS_STORE)
@@ -49,13 +60,16 @@ export async function loadAllMovements(): Promise<StockMovement[]> {
   }
 }
 
-export async function loadMovementsForArticle(articleCode: string): Promise<StockMovement[]> {
+export async function loadMovementsForArticle(
+  articleCode: string,
+  brandId?: BrandId,
+): Promise<StockMovement[]> {
   const articleId = articleCode.trim().toLowerCase()
   if (!articleId) {
     return []
   }
 
-  const db = await openMagazzinoDatabase()
+  const db = await openMagazzinoDatabase(brandId)
   try {
     const tx = db.transaction(MOVEMENTS_STORE, 'readonly')
     const store = tx.objectStore(MOVEMENTS_STORE)
@@ -68,8 +82,11 @@ export async function loadMovementsForArticle(articleCode: string): Promise<Stoc
   }
 }
 
-export async function replaceAllMovements(movements: StockMovement[]): Promise<number> {
-  const db = await openMagazzinoDatabase()
+export async function replaceAllMovements(
+  movements: StockMovement[],
+  brandId?: BrandId,
+): Promise<number> {
+  const db = await openMagazzinoDatabase(brandId)
   try {
     const tx = db.transaction(MOVEMENTS_STORE, 'readwrite')
     const store = tx.objectStore(MOVEMENTS_STORE)
@@ -99,7 +116,10 @@ export type RegisterCaricoResult = RegisterMovementResult
  * stock (giacenza Excel) non viene modificato.
  * Idempotenza: stessa idempotencyKey non crea un secondo movimento.
  */
-export async function registerCarico(input: CaricoInput): Promise<RegisterCaricoResult> {
+export async function registerCarico(
+  input: CaricoInput,
+  brandId?: BrandId,
+): Promise<RegisterCaricoResult> {
   const code = input.articleCode.trim()
   if (!code) {
     throw new Error('Articolo non valido: codice mancante.')
@@ -129,7 +149,7 @@ export async function registerCarico(input: CaricoInput): Promise<RegisterCarico
   }
 
   const articleId = code.toLowerCase()
-  const db = await openMagazzinoDatabase()
+  const db = await openMagazzinoDatabase(brandId)
 
   try {
     const tx = db.transaction([ARTICLES_STORE, MOVEMENTS_STORE], 'readwrite')
@@ -144,11 +164,15 @@ export async function registerCarico(input: CaricoInput): Promise<RegisterCarico
       const article = await requestToPromise(
         articlesStore.get(articleId) as IDBRequest<StoredArticle | undefined>,
       )
+      const existingMovements = await loadArticleMovementsInStore(movementsStore, articleId)
+      const current = article
+        ? computeCurrentStock(toArticleRecord(article).stock, existingMovements)
+        : '—'
       await transactionDone(tx)
       return {
         movement: normalizeStockMovement(existingByKey),
-        previousStock: article?.currentStock ?? '—',
-        newStock: article?.currentStock ?? '—',
+        previousStock: current,
+        newStock: current,
         alreadyApplied: true,
       }
     }
@@ -161,8 +185,9 @@ export async function registerCarico(input: CaricoInput): Promise<RegisterCarico
     }
 
     const article = toArticleRecord(storedArticle)
-    const previousStock = article.currentStock
-    const newStock = addQuantities(previousStock, input.quantity)
+    const existingMovements = await loadArticleMovementsInStore(movementsStore, articleId)
+    // Giacenza operativa dalla formula, non dal campo denormalizzato eventualmente driftato.
+    const previousStock = computeCurrentStock(article.stock, existingMovements)
 
     const movement: StockMovement = {
       id: createId(),
@@ -179,6 +204,7 @@ export async function registerCarico(input: CaricoInput): Promise<RegisterCarico
       idempotencyKey,
     }
 
+    const newStock = computeCurrentStock(article.stock, [...existingMovements, movement])
     movementsStore.add(movement)
 
     const updatedArticle: StoredArticle = {
@@ -211,7 +237,10 @@ export async function registerCarico(input: CaricoInput): Promise<RegisterCarico
  * stock (giacenza Excel) non viene modificato.
  * Senza allowOverdraft, quantità > giacenza viene rifiutata.
  */
-export async function registerScarico(input: ScaricoInput): Promise<RegisterMovementResult> {
+export async function registerScarico(
+  input: ScaricoInput,
+  brandId?: BrandId,
+): Promise<RegisterMovementResult> {
   const code = input.articleCode.trim()
   if (!code) {
     throw new Error('Articolo non valido: codice mancante.')
@@ -238,7 +267,7 @@ export async function registerScarico(input: ScaricoInput): Promise<RegisterMove
   }
 
   const articleId = code.toLowerCase()
-  const db = await openMagazzinoDatabase()
+  const db = await openMagazzinoDatabase(brandId)
 
   try {
     const tx = db.transaction([ARTICLES_STORE, MOVEMENTS_STORE], 'readwrite')
@@ -253,11 +282,15 @@ export async function registerScarico(input: ScaricoInput): Promise<RegisterMove
       const article = await requestToPromise(
         articlesStore.get(articleId) as IDBRequest<StoredArticle | undefined>,
       )
+      const existingMovements = await loadArticleMovementsInStore(movementsStore, articleId)
+      const current = article
+        ? computeCurrentStock(toArticleRecord(article).stock, existingMovements)
+        : '—'
       await transactionDone(tx)
       return {
         movement: normalizeStockMovement(existingByKey),
-        previousStock: article?.currentStock ?? '—',
-        newStock: article?.currentStock ?? '—',
+        previousStock: current,
+        newStock: current,
         alreadyApplied: true,
       }
     }
@@ -270,15 +303,15 @@ export async function registerScarico(input: ScaricoInput): Promise<RegisterMove
     }
 
     const article = toArticleRecord(storedArticle)
-    const previousStock = article.currentStock
+    const existingMovements = await loadArticleMovementsInStore(movementsStore, articleId)
+    // Validazione e aggiornamento sulla giacenza attuale (formula), non sull'iniziale Excel.
+    const previousStock = computeCurrentStock(article.stock, existingMovements)
 
     if (!input.allowOverdraft && !stockCoversQuantity(previousStock, input.quantity)) {
       throw new Error(
         `Quantità superiore alla giacenza disponibile (${previousStock}). Autorizza esplicitamente lo scarico oltre disponibilità oppure riduci la quantità.`,
       )
     }
-
-    const newStock = subtractQuantities(previousStock, input.quantity)
 
     const movement: StockMovement = {
       id: createId(),
@@ -295,6 +328,7 @@ export async function registerScarico(input: ScaricoInput): Promise<RegisterMove
       idempotencyKey,
     }
 
+    const newStock = computeCurrentStock(article.stock, [...existingMovements, movement])
     movementsStore.add(movement)
 
     const updatedArticle: StoredArticle = {
@@ -321,8 +355,12 @@ export async function registerScarico(input: ScaricoInput): Promise<RegisterMove
   }
 }
 
-export async function countCarichiInPeriod(fromDate: string, toDate: string): Promise<number> {
-  const movements = await loadAllMovements()
+export async function countCarichiInPeriod(
+  fromDate: string,
+  toDate: string,
+  brandId?: BrandId,
+): Promise<number> {
+  const movements = await loadAllMovements(brandId)
   return movements.filter(
     (movement) =>
       movement.type === 'CARICO' &&
@@ -331,8 +369,12 @@ export async function countCarichiInPeriod(fromDate: string, toDate: string): Pr
   ).length
 }
 
-export async function countScarichiInPeriod(fromDate: string, toDate: string): Promise<number> {
-  const movements = await loadAllMovements()
+export async function countScarichiInPeriod(
+  fromDate: string,
+  toDate: string,
+  brandId?: BrandId,
+): Promise<number> {
+  const movements = await loadAllMovements(brandId)
   return movements.filter(
     (movement) =>
       movement.type === 'SCARICO' &&
@@ -341,10 +383,11 @@ export async function countScarichiInPeriod(fromDate: string, toDate: string): P
   ).length
 }
 
-/** Carichi già presenti per lo stesso numero DDT + fornitore + data. */
+/** Carichi già presenti per lo stesso numero DDT + fornitore + data (nel brand indicato). */
 export async function findCarichiForDdtDocument(
   identity: DdtDocumentIdentity,
+  brandId?: BrandId,
 ): Promise<StockMovement[]> {
-  const movements = await loadAllMovements()
+  const movements = await loadAllMovements(brandId)
   return findMovementsForDdtDocument(movements, identity)
 }
