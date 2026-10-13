@@ -56,3 +56,11 @@ export function detectBrandFromDocumentText(text: string): BrandDetectionResult 
     supplierOnlyHint,
   }
 }
+
+/** True se il documento propone un brand diverso da quello scelto per la registrazione. */
+export function isDdtBrandMismatch(
+  selectedBrandId: BrandId,
+  detectedBrandId: BrandId | null,
+): boolean {
+  return detectedBrandId != null && detectedBrandId !== selectedBrandId
+}

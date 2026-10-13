@@ -6,7 +6,10 @@ import {
   getBrandDefinition,
   isBrandId,
 } from '../src/brands/brands.ts'
-import { detectBrandFromDocumentText } from '../src/ddt/detectBrand.ts'
+import {
+  detectBrandFromDocumentText,
+  isDdtBrandMismatch,
+} from '../src/ddt/detectBrand.ts'
 import {
   BACKUP_FORMAT,
   BACKUP_VERSION,
@@ -38,6 +41,10 @@ assert.equal(sw.suggestedBrandId, 'swarovski')
 
 const mr = detectBrandFromDocumentText('Cliente MARINA RAPHAEL Milano')
 assert.equal(mr.suggestedBrandId, 'marina-raphael')
+
+assert.equal(isDdtBrandMismatch('marina-raphael', 'elie-saab'), true)
+assert.equal(isDdtBrandMismatch('elie-saab', 'elie-saab'), false)
+assert.equal(isDdtBrandMismatch('swarovski', null), false)
 
 const sampleArticle = {
   code: 'A1',

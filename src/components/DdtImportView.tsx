@@ -4,6 +4,7 @@ import {
   getBrandLabel,
   type BrandId,
 } from '../brands/brands'
+import { isDdtBrandMismatch } from '../ddt/detectBrand'
 import {
   formatDdtAlreadyRegisteredMessage,
 } from '../ddt/ddtDocumentIdentity'
@@ -77,8 +78,12 @@ export function DdtImportView({ articles, activeBrandId, onRegistered }: DdtImpo
   const [selectedBrandId, setSelectedBrandId] = useState<BrandId>(activeBrandId)
   const [brandArticles, setBrandArticles] = useState<ArticleRecord[]>(articles)
   const [brandEvidence, setBrandEvidence] = useState('')
+  const [detectedBrandId, setDetectedBrandId] = useState<BrandId | null>(null)
+  const [brandMismatchAcknowledged, setBrandMismatchAcknowledged] = useState(false)
   const [isLoadingBrandArticles, setIsLoadingBrandArticles] = useState(false)
   const pendingLinesRef = useRef<Parameters<typeof matchExtractedLinesToArticles>[0] | null>(null)
+
+  const brandMismatch = isDdtBrandMismatch(selectedBrandId, detectedBrandId)
 
   const { registrable, blocked } = useMemo(() => getRegistrableRows(rows), [rows])
   const includedCount = rows.filter((row) => row.included).length
@@ -138,6 +143,7 @@ export function DdtImportView({ articles, activeBrandId, onRegistered }: DdtImpo
 
   const handleBrandChange = async (brandId: BrandId) => {
     setSelectedBrandId(brandId)
+    setBrandMismatchAcknowledged(false)
     setError(null)
     setStep((current) => (current === 'confirm' ? 'review' : current))
     await loadBrandArticlesAndRematch(brandId, pendingLinesRef.current)
@@ -166,6 +172,8 @@ export function DdtImportView({ articles, activeBrandId, onRegistered }: DdtImpo
     setSelectedBrandId(activeBrandId)
     setBrandArticles(articles)
     setBrandEvidence('')
+    setDetectedBrandId(null)
+    setBrandMismatchAcknowledged(false)
     pendingLinesRef.current = null
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
@@ -193,6 +201,8 @@ export function DdtImportView({ articles, activeBrandId, onRegistered }: DdtImpo
 
       const proposedBrand = result.suggestedBrandId ?? activeBrandId
       pendingLinesRef.current = result.lines
+      setDetectedBrandId(result.suggestedBrandId)
+      setBrandMismatchAcknowledged(false)
       setSelectedBrandId(proposedBrand)
       setBrandEvidence(result.brandEvidence)
       const brandArts = await loadBrandArticlesAndRematch(proposedBrand, result.lines)
@@ -324,12 +334,25 @@ export function DdtImportView({ articles, activeBrandId, onRegistered }: DdtImpo
         setError(duplicateMessage)
         return
       }
+      if (brandMismatch && !brandMismatchAcknowledged) {
+        setError(
+          `Il documento indica ${getBrandLabel(detectedBrandId!)} ma stai per registrare su ${getBrandLabel(selectedBrandId)}. Correggi il brand oppure conferma esplicitamente la discrepanza nel riepilogo.`,
+        )
+        setStep('confirm')
+        return
+      }
       setStep('confirm')
     })()
   }
 
   const handleConfirmRegister = async () => {
     if (isSaving || savingLockRef.current) {
+      return
+    }
+    if (brandMismatch && !brandMismatchAcknowledged) {
+      setError(
+        `Conferma esplicita obbligatoria: il DDT risulta di ${getBrandLabel(detectedBrandId!)} ma l’archivio selezionato è ${getBrandLabel(selectedBrandId)}.`,
+      )
       return
     }
     savingLockRef.current = true
@@ -512,8 +535,20 @@ export function DdtImportView({ articles, activeBrandId, onRegistered }: DdtImpo
                 Il brand determina l&apos;anagrafica usata per l&apos;abbinamento e l&apos;archivio
                 in cui verranno registrati i carichi. Non confondere il brand con il fornitore.
                 {brandEvidence ? ` Rilevato nel documento: ${brandEvidence}.` : ''}
-                {isLoadingBrandArticles ? ' Caricamento anagrafica brand…' : ` Articoli brand: ${brandArticles.length}.`}
+                {isLoadingBrandArticles
+                  ? ' Caricamento anagrafica brand…'
+                  : ` Articoli brand: ${brandArticles.length}.`}
               </p>
+              {brandMismatch ? (
+                <div className="alert alert--warning" role="status" style={{ gridColumn: '1 / -1' }}>
+                  <p>
+                    Attenzione: il documento sembra riferirsi a{' '}
+                    <strong>{getBrandLabel(detectedBrandId!)}</strong>, mentre l&apos;archivio
+                    selezionato è <strong>{getBrandLabel(selectedBrandId)}</strong>. Correggi il
+                    brand oppure conferma esplicitamente nel riepilogo prima della registrazione.
+                  </p>
+                </div>
+              ) : null}
               <label className="field">
                 <span className="field__label">Numero DDT *</span>
                 <input
@@ -808,6 +843,27 @@ export function DdtImportView({ articles, activeBrandId, onRegistered }: DdtImpo
             Anteprima non ancora salvata. Annullando non vengono creati movimenti.
           </p>
 
+          {brandMismatch ? (
+            <div className="alert alert--warning" role="alert">
+              <p>
+                Discrepanza brand: documento <strong>{getBrandLabel(detectedBrandId!)}</strong> ·
+                archivio di registrazione <strong>{getBrandLabel(selectedBrandId)}</strong>.
+              </p>
+              <label className="field" style={{ marginTop: '0.75rem' }}>
+                <span className="field__label">
+                  <input
+                    type="checkbox"
+                    checked={brandMismatchAcknowledged}
+                    disabled={isSaving}
+                    onChange={(event) => setBrandMismatchAcknowledged(event.target.checked)}
+                  />{' '}
+                  Confermo di registrare i carichi sull&apos;archivio{' '}
+                  {getBrandLabel(selectedBrandId)} nonostante il brand rilevato nel documento.
+                </span>
+              </label>
+            </div>
+          ) : null}
+
           <div className="import-wizard__actions">
             <button
               type="button"
@@ -820,7 +876,7 @@ export function DdtImportView({ articles, activeBrandId, onRegistered }: DdtImpo
             <button
               type="button"
               className="primary-button"
-              disabled={isSaving}
+              disabled={isSaving || (brandMismatch && !brandMismatchAcknowledged)}
               onClick={() => {
                 void handleConfirmRegister()
               }}

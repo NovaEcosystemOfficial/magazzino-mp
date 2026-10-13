@@ -97,6 +97,143 @@
   }
 }
 
+/* ——— Selezione brand (post-splash) ——— */
+.brand-select-screen {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: var(--mr-bg);
+  color: var(--mr-text);
+}
+
+.brand-select-screen__card {
+  width: min(100%, 28rem);
+  display: grid;
+  justify-items: stretch;
+  gap: 0.65rem;
+  padding: 2rem 1.6rem 1.7rem;
+  border: 1px solid var(--mr-border);
+  border-radius: var(--mr-radius);
+  background: var(--mr-surface);
+  box-shadow: var(--mr-shadow-md);
+  text-align: center;
+}
+
+.brand-select-screen__logo {
+  display: grid;
+  place-items: center;
+  margin-bottom: 0.15rem;
+}
+
+.brand-select-screen__eyebrow {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mr-text-soft);
+  font-weight: 650;
+}
+
+.brand-select-screen__title {
+  margin: 0;
+  font-size: 1.55rem;
+  line-height: 1.2;
+  font-weight: 750;
+  color: var(--mr-anthracite);
+}
+
+.brand-select-screen__subtitle {
+  margin: 0 0 0.4rem;
+  color: var(--mr-text-muted);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.brand-select-screen__list {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.brand-select-screen__option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  text-align: left;
+  border: 1px solid var(--mr-border);
+  border-radius: var(--mr-radius);
+  background: #fafbfc;
+  padding: 0.9rem 1rem;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.brand-select-screen__option:hover,
+.brand-select-screen__option:focus-visible {
+  border-color: var(--mr-primary);
+  background: #fff;
+  outline: none;
+  box-shadow: 0 0 0 3px var(--mr-primary-soft);
+}
+
+.brand-select-screen__option--highlighted {
+  border-color: var(--mr-primary);
+  background: #fff;
+}
+
+.brand-select-screen__option-mark {
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  display: grid;
+  place-items: center;
+  border-radius: 0.45rem;
+  background: var(--mr-primary);
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+}
+
+.brand-select-screen__option-text {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.brand-select-screen__option-label {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--mr-anthracite);
+}
+
+.brand-select-screen__option-hint {
+  font-size: 0.82rem;
+  color: var(--mr-text-muted);
+  line-height: 1.35;
+}
+
+.brand-select-screen__footnote {
+  margin: 0.55rem 0 0;
+  font-size: 0.8rem;
+  color: var(--mr-text-soft);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .brand-select-screen__animate {
+    animation: splash-enter 420ms ease-out both;
+  }
+}
+
 /* ——— Sidebar chiara (stile WMS) ——— */
 .sidebar {
   display: flex;
@@ -228,13 +365,36 @@
 
 .sidebar__brand-select {
   width: 100%;
-  margin: 0.35rem 0 0.55rem;
+  margin: 0.35rem 0 0.45rem;
   font-size: 0.85rem;
   padding: 0.45rem 0.55rem;
 }
 
+.sidebar__active-brand {
+  margin-top: 0;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid var(--mr-border);
+  border-radius: var(--mr-radius);
+  background: #fafbfc;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.sidebar__active-brand-name {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 750;
+  color: var(--mr-anthracite);
+  line-height: 1.25;
+}
+
+.sidebar__change-brand {
+  width: 100%;
+  margin-top: 0.15rem;
+}
+
 .sidebar__footer {
-  margin-top: auto;
+  margin-top: 0.65rem;
   padding: 0.85rem 0.9rem;
   border: 1px solid var(--mr-border);
   border-radius: var(--mr-radius);

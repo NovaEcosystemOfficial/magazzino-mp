@@ -4,6 +4,7 @@ import { BRAND_DEFINITIONS, getBrandLabel, type BrandId } from './brands/brands'
 import { getActiveBrandId, setActiveBrandId } from './brands/brandPreference'
 import { ArticleDetailView } from './components/ArticleDetailView'
 import { ArticlesImportWizard } from './components/ArticlesImportWizard'
+import { BrandSelectScreen } from './components/BrandSelectScreen'
 import { CarichiView } from './components/CarichiView'
 import { DdtImportView } from './components/DdtImportView'
 import { DdtRegistryView } from './components/DdtRegistryView'
@@ -428,6 +429,8 @@ function PlaceholderView({
 
 function App() {
   const [showSplash, setShowSplash] = useState(() => !hasSeenSplashScreen())
+  /** Dopo lo splash (o all’apertura se splash già visto) richiede scelta brand esplicita. */
+  const [showBrandSelect, setShowBrandSelect] = useState(() => hasSeenSplashScreen())
   const [activeBrandId, setActiveBrandIdState] = useState<BrandId>(() => getActiveBrandId())
   const [activeView, setActiveView] = useState<ViewId>('dashboard')
   const [articleCodeQuery, setArticleCodeQuery] = useState('')
@@ -448,12 +451,26 @@ function App() {
   const handleEnterGestionale = () => {
     markSplashScreenSeen()
     setShowSplash(false)
+    setShowBrandSelect(true)
+  }
+
+  const applyBrandSelection = (brandId: BrandId) => {
+    setActiveBrandId(brandId)
+    setActiveBrandIdState(brandId)
+    setSelectedArticleCode(null)
+    setImportSheetData(null)
+    setImportError(null)
+    setImportSummary(null)
+    setArticleCodeQuery('')
+    setArticleDescriptionQuery('')
     setActiveView('dashboard')
+    setShowBrandSelect(false)
   }
 
   const handleReenableSplashForTesting = () => {
     resetSplashScreenPreference()
     setShowSplash(true)
+    setShowBrandSelect(false)
   }
 
   const currentDate = useMemo(() => formatCurrentDate(new Date()), [])
@@ -646,17 +663,11 @@ function App() {
   }
 
   const handleBrandChange = (brandId: BrandId) => {
-    if (brandId === activeBrandId) {
-      return
-    }
-    setActiveBrandId(brandId)
-    setActiveBrandIdState(brandId)
-    setSelectedArticleCode(null)
-    setImportSheetData(null)
-    setImportError(null)
-    setImportSummary(null)
-    setArticleCodeQuery('')
-    setArticleDescriptionQuery('')
+    applyBrandSelection(brandId)
+  }
+
+  const handleOpenBrandSelect = () => {
+    setShowBrandSelect(true)
   }
 
   const handleImportClick = () => {
@@ -745,6 +756,15 @@ function App() {
     return <SplashScreen onEnter={handleEnterGestionale} />
   }
 
+  if (showBrandSelect) {
+    return (
+      <BrandSelectScreen
+        highlightedBrandId={activeBrandId}
+        onSelect={applyBrandSelection}
+      />
+    )
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="Navigazione principale">
@@ -754,6 +774,39 @@ function App() {
             <p className="sidebar__eyebrow">Materie Prime</p>
             <h1 className="sidebar__title">MAGAZZINO MP</h1>
           </div>
+        </div>
+
+        <div className="sidebar__active-brand" aria-label="Brand attivo">
+          <p className="sidebar__footer-label">Brand attivo</p>
+          <p className="sidebar__active-brand-name">{activeBrandLabel}</p>
+          <label className="visually-hidden" htmlFor="active-brand-select">
+            Cambia brand dall&apos;elenco
+          </label>
+          <select
+            id="active-brand-select"
+            className="field__control sidebar__brand-select"
+            value={activeBrandId}
+            onChange={(event) => handleBrandChange(event.target.value as BrandId)}
+            disabled={isLoadingArticles || isSavingImport}
+          >
+            {BRAND_DEFINITIONS.map((brand) => (
+              <option key={brand.id} value={brand.id}>
+                {brand.label}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="secondary-button sidebar__change-brand"
+            onClick={handleOpenBrandSelect}
+            disabled={isSavingImport}
+          >
+            Cambia brand…
+          </button>
+          <p className="sidebar__footer-value">
+            {isLoadingArticles ? 'Caricamento…' : `${articles.length} articoli`}
+          </p>
+          <span className="sidebar__footer-badge">Archivio · IndexedDB</span>
         </div>
 
         <nav className="sidebar__nav">
@@ -775,29 +828,6 @@ function App() {
             </button>
           ))}
         </nav>
-
-        <div className="sidebar__footer">
-          <label className="sidebar__footer-label" htmlFor="active-brand-select">
-            Brand attivo
-          </label>
-          <select
-            id="active-brand-select"
-            className="field__control sidebar__brand-select"
-            value={activeBrandId}
-            onChange={(event) => handleBrandChange(event.target.value as BrandId)}
-            disabled={isLoadingArticles || isSavingImport}
-          >
-            {BRAND_DEFINITIONS.map((brand) => (
-              <option key={brand.id} value={brand.id}>
-                {brand.label}
-              </option>
-            ))}
-          </select>
-          <p className="sidebar__footer-value">
-            {isLoadingArticles ? 'Caricamento…' : `${articles.length} articoli`}
-          </p>
-          <span className="sidebar__footer-badge">{activeBrandLabel} · IndexedDB</span>
-        </div>
       </aside>
 
       <div className="content">
@@ -805,7 +835,9 @@ function App() {
           <div>
             <h2 className="topbar__title">{title}</h2>
             <p className="topbar__eyebrow">
-              {isDashboard ? 'Panoramica operativa e analitica' : 'Sezione corrente'}
+              {isDashboard
+                ? `Archivio ${activeBrandLabel} · panoramica operativa`
+                : `Archivio ${activeBrandLabel}`}
             </p>
           </div>
 
@@ -832,7 +864,7 @@ function App() {
             <>
               <section className="card-grid" aria-labelledby="dashboard-riepilogo">
                 <div className="section-heading">
-                  <p className="section-heading__eyebrow">Panoramica</p>
+                  <p className="section-heading__eyebrow">Panoramica · {activeBrandLabel}</p>
                   <h3 id="dashboard-riepilogo">Riepilogo rapido</h3>
                 </div>
 
