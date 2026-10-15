@@ -8,6 +8,10 @@ import { BrandSelectScreen } from './components/BrandSelectScreen'
 import { CarichiView } from './components/CarichiView'
 import { DdtImportView } from './components/DdtImportView'
 import { DdtRegistryView } from './components/DdtRegistryView'
+import {
+  hasRecentMovementActivity,
+  MovementsActivityChart,
+} from './components/MovementsActivityChart'
 import { MovimentiView } from './components/MovimentiView'
 import { ReportView } from './components/ReportView'
 import { ScarichiView } from './components/ScarichiView'
@@ -30,7 +34,11 @@ import type { StockMovement } from './types/movements'
 import { parseNumericStock } from './excel/articoliMapping'
 import { normalizeUnitForReport } from './report/buildWarehouseReport'
 import { formatLocalDateLabel, formatQuantity, todayLocalIsoDate } from './utils/quantity'
-import { reconcileArticlesWithMovements } from './utils/stockBalance'
+import {
+  computeCurrentStock,
+  movementsForArticle,
+  reconcileArticlesWithMovements,
+} from './utils/stockBalance'
 
 type ViewId =
   | 'dashboard'
@@ -192,6 +200,7 @@ function formatCurrentDate(date: Date) {
 
 function ArticlesView({
   articles,
+  movements,
   codeQuery,
   descriptionQuery,
   importError,
@@ -206,6 +215,7 @@ function ArticlesView({
   onOpenArticle,
 }: {
   articles: ArticleRecord[]
+  movements: StockMovement[]
   codeQuery: string
   descriptionQuery: string
   importError: string | null
@@ -231,6 +241,66 @@ function ArticlesView({
   })
 
   const hasActiveFilters = codeQuery.trim().length > 0 || descriptionQuery.trim().length > 0
+  const ARTICLES_PREVIEW = 5
+  const previewRows = filteredRows.slice(0, ARTICLES_PREVIEW)
+  const extraRows = filteredRows.slice(ARTICLES_PREVIEW)
+
+  const renderArticleRow = (row: ArticleRecord) => {
+    const stockLabel = computeCurrentStock(
+      row.stock,
+      movementsForArticle(movements, row.code),
+    )
+    const stockValue = parseNumericStock(stockLabel)
+    const minValue = parseNumericStock(row.minStock)
+    const isEmpty = stockValue !== null && stockValue <= 0
+    const isLow =
+      !isEmpty && stockValue !== null && minValue !== null && stockValue < minValue
+    const rowClass = [
+      'articles-table__row--clickable',
+      isEmpty ? 'articles-table__row--empty' : '',
+      isLow ? 'articles-table__row--low' : '',
+    ]
+      .filter(Boolean)
+      .join(' ')
+
+    return (
+      <tr key={row.code} className={rowClass} onClick={() => onOpenArticle(row.code)}>
+        <td>
+          <code className="article-code">{row.code}</code>
+        </td>
+        <td>{row.description}</td>
+        <td>{row.unitOfMeasure || '—'}</td>
+        <td
+          className={`numeric-cell stock-cell${
+            isEmpty ? ' stock-cell--empty' : isLow ? ' stock-cell--low' : ' stock-cell--ok'
+          }`}
+        >
+          {stockLabel}
+        </td>
+        <td>
+          {isEmpty ? (
+            <span className="status-pill status-pill--danger">Esaurito</span>
+          ) : isLow ? (
+            <span className="status-pill status-pill--warning">Sotto scorta</span>
+          ) : (
+            <span className="status-pill status-pill--ok">{row.status || 'OK'}</span>
+          )}
+        </td>
+        <td>
+          <button
+            type="button"
+            className="secondary-button secondary-button--compact"
+            onClick={(event) => {
+              event.stopPropagation()
+              onOpenArticle(row.code)
+            }}
+          >
+            Apri scheda
+          </button>
+        </td>
+      </tr>
+    )
+  }
 
   return (
     <section className="articles-page" aria-labelledby="articoli-title">
@@ -333,7 +403,7 @@ function ArticlesView({
                 <th scope="col">Codice</th>
                 <th scope="col">Descrizione</th>
                 <th scope="col">Unità di misura</th>
-                <th scope="col">Giacenza</th>
+                <th scope="col">Giacenza attuale</th>
                 <th scope="col">Stato</th>
                 <th scope="col">Azioni</th>
               </tr>
@@ -347,32 +417,8 @@ function ArticlesView({
                     </div>
                   </td>
                 </tr>
-              ) : filteredRows.length > 0 ? (
-                filteredRows.map((row) => (
-                  <tr
-                    key={row.code}
-                    className="articles-table__row--clickable"
-                    onClick={() => onOpenArticle(row.code)}
-                  >
-                    <td>{row.code}</td>
-                    <td>{row.description}</td>
-                    <td>{row.unitOfMeasure}</td>
-                    <td>{row.currentStock}</td>
-                    <td>{row.status}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="secondary-button secondary-button--compact"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          onOpenArticle(row.code)
-                        }}
-                      >
-                        Apri scheda
-                      </button>
-                    </td>
-                  </tr>
-                ))
+              ) : previewRows.length > 0 ? (
+                previewRows.map((row) => renderArticleRow(row))
               ) : (
                 <tr>
                   <td colSpan={6}>
@@ -394,6 +440,27 @@ function ArticlesView({
             </tbody>
           </table>
         </div>
+
+        {!isLoadingArticles && extraRows.length > 0 ? (
+          <details className="report-more">
+            <summary>Altri {extraRows.length} articoli</summary>
+            <div className="table-wrap report-more__table" aria-label="Altri articoli">
+              <table className="articles-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Codice</th>
+                    <th scope="col">Descrizione</th>
+                    <th scope="col">Unità di misura</th>
+                    <th scope="col">Giacenza attuale</th>
+                    <th scope="col">Stato</th>
+                    <th scope="col">Azioni</th>
+                  </tr>
+                </thead>
+                <tbody>{extraRows.map((row) => renderArticleRow(row))}</tbody>
+              </table>
+            </div>
+          </details>
+        ) : null}
       </div>
     </section>
   )
@@ -538,56 +605,11 @@ function App() {
       .sort((a, b) => a.unit.localeCompare(b.unit))
   }, [articles])
 
-  const dashboardStats = useMemo(
-    () => [
-      {
-        label: 'Articoli in anagrafica',
-        value: isLoadingArticles ? '…' : String(articles.length),
-        note: storageError
-          ? 'Errore di lettura IndexedDB.'
-          : articles.length === 0
-            ? 'Archivio locale vuoto.'
-            : 'Conteggio reale da IndexedDB.',
-        accent: 'accent-blue' as const,
-      },
-      {
-        label: 'Sotto scorta minima',
-        value: isLoadingArticles ? '…' : String(belowMinCount),
-        note:
-          belowMinCount > 0
-            ? 'Articoli con giacenza inferiore alla soglia configurata.'
-            : 'Nessun articolo sotto soglia (o soglie non configurate).',
-        accent: 'accent-orange' as const,
-      },
-      {
-        label: 'Carichi del periodo',
-        value: isLoadingArticles ? '…' : String(carichiDelPeriodo),
-        note: 'Movimenti CARICO del mese corrente.',
-        accent: 'accent-green' as const,
-      },
-      {
-        label: 'Scarichi del periodo',
-        value: isLoadingArticles ? '…' : String(scarichiDelPeriodo),
-        note: 'Movimenti SCARICO del mese corrente.',
-        accent: 'accent-slate' as const,
-      },
-    ],
-    [
-      articles.length,
-      isLoadingArticles,
-      storageError,
-      belowMinCount,
-      carichiDelPeriodo,
-      scarichiDelPeriodo,
-    ],
-  )
-
   const selectedArticleMovements = useMemo(() => {
     if (!selectedArticleCode) {
       return []
     }
-    const key = selectedArticleCode.trim().toLowerCase()
-    return movements.filter((movement) => movement.articleId === key)
+    return movementsForArticle(movements, selectedArticleCode)
   }, [movements, selectedArticleCode])
 
   const recentCarichi = useMemo(
@@ -767,248 +789,313 @@ function App() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar" aria-label="Navigazione principale">
-        <div className="sidebar__brand">
-          <span className="sidebar__brand-mark" aria-hidden="true" />
-          <div>
-            <p className="sidebar__eyebrow">Materie Prime</p>
-            <h1 className="sidebar__title">MAGAZZINO MP</h1>
+      <header className="app-header">
+        <div className="app-header__brand">
+          <span className="app-header__mark" aria-hidden="true">
+            MP
+          </span>
+          <div className="app-header__titles">
+            <p className="app-header__product">Magazzino MP</p>
+            <p className="app-header__tagline">Gestione Materie Prime</p>
           </div>
         </div>
 
-        <div className="sidebar__active-brand" aria-label="Brand attivo">
-          <p className="sidebar__footer-label">Brand attivo</p>
-          <p className="sidebar__active-brand-name">{activeBrandLabel}</p>
-          <label className="visually-hidden" htmlFor="active-brand-select">
-            Cambia brand dall&apos;elenco
-          </label>
-          <select
-            id="active-brand-select"
-            className="field__control sidebar__brand-select"
-            value={activeBrandId}
-            onChange={(event) => handleBrandChange(event.target.value as BrandId)}
-            disabled={isLoadingArticles || isSavingImport}
-          >
-            {BRAND_DEFINITIONS.map((brand) => (
-              <option key={brand.id} value={brand.id}>
-                {brand.label}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            className="secondary-button sidebar__change-brand"
-            onClick={handleOpenBrandSelect}
-            disabled={isSavingImport}
-          >
-            Cambia brand…
-          </button>
-          <p className="sidebar__footer-value">
-            {isLoadingArticles ? 'Caricamento…' : `${articles.length} articoli`}
-          </p>
-          <span className="sidebar__footer-badge">Archivio · IndexedDB</span>
-        </div>
-
-        <nav className="sidebar__nav">
-          {navigationItems.map((item) => (
+        <div className="app-header__brands" role="group" aria-label="Selezione brand">
+          {BRAND_DEFINITIONS.map((brand) => (
             <button
-              key={item.id}
+              key={brand.id}
               type="button"
-              className={`sidebar__link${item.id === activeView ? ' sidebar__link--active' : ''}`}
-              onClick={() => {
-                setActiveView(item.id)
-                if (item.id !== 'articoli') {
-                  setSelectedArticleCode(null)
-                }
-              }}
-              aria-current={item.id === activeView ? 'page' : undefined}
+              className={`brand-chip${brand.id === activeBrandId ? ' brand-chip--active' : ''}`}
+              onClick={() => handleBrandChange(brand.id)}
+              disabled={isLoadingArticles || isSavingImport}
+              aria-pressed={brand.id === activeBrandId}
             >
-              <NavIcon id={item.id} />
-              <span>{item.label}</span>
+              {brand.label}
             </button>
           ))}
-        </nav>
-      </aside>
+        </div>
 
-      <div className="content">
-        <header className="topbar">
-          <div>
-            <h2 className="topbar__title">{title}</h2>
-            <p className="topbar__eyebrow">
-              {isDashboard
-                ? `Archivio ${activeBrandLabel} · panoramica operativa`
-                : `Archivio ${activeBrandLabel}`}
+        <div className="app-header__meta">
+          <span className="app-header__date">{currentDate}</span>
+          <div className="app-header__active" aria-label="Brand attivo">
+            <span className="app-header__active-label">Attivo</span>
+            <span className="app-header__active-value">{activeBrandLabel}</span>
+          </div>
+        </div>
+      </header>
+
+      <div className="app-body">
+        <aside className="sidebar" aria-label="Navigazione principale">
+          <nav className="sidebar__nav">
+            {navigationItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`sidebar__link${item.id === activeView ? ' sidebar__link--active' : ''}`}
+                onClick={() => {
+                  setActiveView(item.id)
+                  if (item.id !== 'articoli') {
+                    setSelectedArticleCode(null)
+                  }
+                }}
+                aria-current={item.id === activeView ? 'page' : undefined}
+              >
+                <NavIcon id={item.id} />
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </nav>
+
+          <div className="sidebar__foot">
+            <p className="sidebar__foot-stat">
+              Archivio
+              <strong>{isLoadingArticles ? '…' : `${articles.length} articoli`}</strong>
             </p>
+            <button
+              type="button"
+              className="sidebar__change-brand"
+              onClick={handleOpenBrandSelect}
+              disabled={isSavingImport}
+            >
+              Schermata brand
+            </button>
           </div>
+        </aside>
 
-          <div className="topbar__meta" aria-label="Informazioni pagina">
-            <span>{currentDate}</span>
-            <span className="topbar__badge">{activeBrandLabel}</span>
-          </div>
-        </header>
+        <div className="content">
+          <header className="page-header">
+            <div>
+              <p className="page-header__eyebrow">
+                {isDashboard
+                  ? `Archivio ${activeBrandLabel}`
+                  : `Archivio ${activeBrandLabel}`}
+              </p>
+              <h2 className="page-header__title">{title}</h2>
+            </div>
+            {isDashboard ? (
+              <div className="dashboard__actions">
+                <button
+                  type="button"
+                  className="primary-button primary-button--cta"
+                  onClick={() => setActiveView('importazione-ddt')}
+                >
+                  Importa DDT
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setActiveView('carichi')}
+                >
+                  Registra carico
+                </button>
+              </div>
+            ) : null}
+          </header>
 
-        <main className="main-content">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-            className="visually-hidden"
-            onChange={(event) => {
-              void handleFileSelected(event)
-            }}
-            tabIndex={-1}
-            aria-hidden="true"
-          />
+          <main className="main-content">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+              className="visually-hidden"
+              onChange={(event) => {
+                void handleFileSelected(event)
+              }}
+              tabIndex={-1}
+              aria-hidden="true"
+            />
 
-          {isDashboard ? (
-            <>
-              <section className="card-grid" aria-labelledby="dashboard-riepilogo">
-                <div className="section-heading">
-                  <p className="section-heading__eyebrow">Panoramica · {activeBrandLabel}</p>
-                  <h3 id="dashboard-riepilogo">Riepilogo rapido</h3>
-                </div>
-
+            {isDashboard ? (
+              <div className="dashboard">
                 {storageError ? (
                   <div className="alert alert--error" role="alert">
                     <p>{storageError}</p>
                   </div>
                 ) : null}
 
-                <div className="card-grid__items">
-                  {dashboardStats.map((card) => (
+                <section className="dashboard__hero" aria-labelledby="dashboard-giacenze">
+                  <article className="stock-hero">
+                    <div className="stock-hero__heading">
+                      <p className="stock-hero__eyebrow">Giacenza complessiva</p>
+                      <h3 id="dashboard-giacenze" className="stock-hero__title">
+                        Totali per unità di misura
+                      </h3>
+                    </div>
+                    {isLoadingArticles ? (
+                      <p className="helper-text">Caricamento giacenze…</p>
+                    ) : stockByUnit.length === 0 ? (
+                      <p className="helper-text">Nessuna giacenza numerica disponibile.</p>
+                    ) : (
+                      <>
+                        <div className="stock-hero__units">
+                          {stockByUnit.slice(0, 5).map((row) => (
+                            <div key={row.unit} className="stock-unit">
+                              <span className="stock-unit__value">{row.quantityLabel}</span>
+                              <span className="stock-unit__label">{row.unit}</span>
+                            </div>
+                          ))}
+                        </div>
+                        {stockByUnit.length > 5 ? (
+                          <details className="stock-hero__more">
+                            <summary>
+                              Altre {stockByUnit.length - 5} unità di misura
+                            </summary>
+                            <div className="stock-hero__units stock-hero__units--extra">
+                              {stockByUnit.slice(5).map((row) => (
+                                <div key={row.unit} className="stock-unit">
+                                  <span className="stock-unit__value">{row.quantityLabel}</span>
+                                  <span className="stock-unit__label">{row.unit}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </details>
+                        ) : null}
+                      </>
+                    )}
+                  </article>
+
+                  <div className="metric-stack">
                     <article
-                      key={card.label}
-                      className={`summary-card summary-card--${card.accent}`}
+                      className={`metric-tile${belowMinCount > 0 ? ' metric-tile--alert' : ''}`}
                     >
-                      <p className="summary-card__label">{card.label}</p>
-                      <strong className="summary-card__value">{card.value}</strong>
-                      <p className="summary-card__note">{card.note}</p>
+                      <p className="metric-tile__label">Sotto scorta</p>
+                      <strong className="metric-tile__value">
+                        {isLoadingArticles ? '…' : belowMinCount}
+                      </strong>
+                      <p className="metric-tile__note">
+                        {belowMinCount > 0
+                          ? 'Articoli sotto la soglia minima configurata.'
+                          : 'Nessun articolo sotto soglia (o soglie non impostate).'}
+                      </p>
                     </article>
-                  ))}
-                </div>
-              </section>
+                    <article className="metric-tile metric-tile--forest">
+                      <p className="metric-tile__label">Carichi del mese</p>
+                      <strong className="metric-tile__value">
+                        {isLoadingArticles ? '…' : carichiDelPeriodo}
+                      </strong>
+                      <p className="metric-tile__note">Movimenti CARICO nel periodo corrente.</p>
+                    </article>
+                    <article className="metric-tile">
+                      <p className="metric-tile__label">Scarichi del mese</p>
+                      <strong className="metric-tile__value">
+                        {isLoadingArticles ? '…' : scarichiDelPeriodo}
+                      </strong>
+                      <p className="metric-tile__note">Movimenti SCARICO nel periodo corrente.</p>
+                    </article>
+                    <article className="metric-tile">
+                      <p className="metric-tile__label">Articoli in anagrafica</p>
+                      <strong className="metric-tile__value">
+                        {isLoadingArticles ? '…' : articles.length}
+                      </strong>
+                      <p className="metric-tile__note">
+                        {storageError
+                          ? 'Errore di lettura IndexedDB.'
+                          : articles.length === 0
+                            ? 'Archivio locale vuoto.'
+                            : 'Conteggio reale da IndexedDB.'}
+                      </p>
+                    </article>
+                  </div>
+                </section>
 
-              {!isLoadingArticles && belowMinCount > 0 ? (
-                <div className="alert alert--warning" role="status">
-                  <p>
-                    Avviso operativo:{' '}
-                    <span className="status-pill status-pill--warning">Sotto scorta</span>{' '}
-                    {belowMinCount} articol{belowMinCount === 1 ? 'o' : 'i'} sotto la scorta minima.
-                    Consultare Report o le schede articolo per i dettagli.
-                  </p>
-                </div>
-              ) : null}
+                {!isLoadingArticles && belowMinCount > 0 ? (
+                  <div className="alert alert--warning" role="status">
+                    <p>
+                      Avviso operativo:{' '}
+                      <span className="status-pill status-pill--warning">Sotto scorta</span>{' '}
+                      {belowMinCount} articol{belowMinCount === 1 ? 'o' : 'i'} sotto la scorta
+                      minima.
+                    </p>
+                  </div>
+                ) : null}
 
-              <section className="panel" aria-labelledby="giacenze-udm">
-                <div className="section-heading">
-                  <p className="section-heading__eyebrow">Giacenze</p>
-                  <h3 id="giacenze-udm">Riepilogo per unità di misura</h3>
-                  <p className="section-heading__description">
-                    Totali attuali separati per UdM (normalizzate solo in visualizzazione).
-                  </p>
-                </div>
-                <div className="table-wrap" aria-label="Giacenze per unità di misura">
-                  <table className="activity-table">
-                    <thead>
-                      <tr>
-                        <th scope="col">Unità di misura</th>
-                        <th scope="col">Giacenza attuale</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {isLoadingArticles ? (
-                        <tr>
-                          <td colSpan={2}>Caricamento…</td>
-                        </tr>
-                      ) : stockByUnit.length === 0 ? (
-                        <tr>
-                          <td colSpan={2}>Nessuna giacenza numerica disponibile.</td>
-                        </tr>
-                      ) : (
-                        stockByUnit.map((row) => (
-                          <tr key={row.unit}>
-                            <td>{row.unit}</td>
-                            <td className="numeric-cell">{row.quantityLabel}</td>
+                <section className="dashboard__split">
+                  {hasRecentMovementActivity(movements) ? (
+                    <div className="panel" aria-labelledby="dashboard-chart">
+                      <div className="section-heading">
+                        <p className="section-heading__eyebrow">Andamento</p>
+                        <h3 id="dashboard-chart">Movimenti ultimi 14 giorni</h3>
+                        <p className="section-heading__description">
+                          Conteggio giornaliero dei movimenti già registrati (nessuna stima).
+                        </p>
+                      </div>
+                      <MovementsActivityChart movements={movements} />
+                    </div>
+                  ) : null}
+
+                  <div className="panel" aria-labelledby="attivita-recenti">
+                    <div className="section-heading">
+                      <p className="section-heading__eyebrow">Storico</p>
+                      <h3 id="attivita-recenti">Attività recenti</h3>
+                    </div>
+                    <div className="table-wrap" aria-label="Tabella attività recenti">
+                      <table className="activity-table">
+                        <thead>
+                          <tr>
+                            <th scope="col">Data</th>
+                            <th scope="col">Operazione</th>
+                            <th scope="col">Documento</th>
+                            <th scope="col">Articolo</th>
                           </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
+                        </thead>
+                        <tbody>
+                          {recentMovements.length === 0 ? (
+                            <tr>
+                              <td colSpan={4}>Nessun movimento registrato.</td>
+                            </tr>
+                          ) : (
+                            recentMovements.map((movement) => (
+                              <tr key={movement.id}>
+                                <td>{formatLocalDateLabel(movement.movementDate)}</td>
+                                <td>
+                                  <span
+                                    className={
+                                      movement.type === 'CARICO'
+                                        ? 'status-pill status-pill--carico'
+                                        : 'status-pill status-pill--scarico'
+                                    }
+                                  >
+                                    {movement.type}
+                                  </span>
+                                </td>
+                                <td>
+                                  {movement.documentRef ||
+                                    (movement.type === 'SCARICO'
+                                      ? movement.reason
+                                      : movement.supplier) ||
+                                    '—'}
+                                </td>
+                                <td>{movement.articleCode}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </section>
 
-              <section className="panel" aria-labelledby="attivita-recenti">
-                <div className="section-heading">
-                  <p className="section-heading__eyebrow">Storico</p>
-                  <h3 id="attivita-recenti">Attività recenti</h3>
-                </div>
-
-                <div className="table-wrap" aria-label="Tabella attività recenti">
-                  <table className="activity-table">
-                    <thead>
-                      <tr>
-                        <th scope="col">Data</th>
-                        <th scope="col">Operazione</th>
-                        <th scope="col">Documento</th>
-                        <th scope="col">Articolo</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {recentMovements.length === 0 ? (
-                        <tr>
-                          <td colSpan={4}>Nessun movimento registrato.</td>
-                        </tr>
-                      ) : (
-                        recentMovements.map((movement) => (
-                          <tr key={movement.id}>
-                            <td>{formatLocalDateLabel(movement.movementDate)}</td>
-                            <td>
-                              <span
-                                className={
-                                  movement.type === 'CARICO'
-                                    ? 'status-pill status-pill--carico'
-                                    : 'status-pill status-pill--scarico'
-                                }
-                              >
-                                {movement.type}
-                              </span>
-                            </td>
-                            <td>
-                              {movement.documentRef ||
-                                (movement.type === 'SCARICO' ? movement.reason : movement.supplier) ||
-                                '—'}
-                            </td>
-                            <td>{movement.articleCode}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-
-              <section className="panel" aria-labelledby="azioni-rapide">
-                <div className="section-heading">
-                  <p className="section-heading__eyebrow">Operatività</p>
-                  <h3 id="azioni-rapide">Azioni rapide</h3>
-                </div>
-
-                <div className="quick-actions">
-                  {quickActions.map((action) => (
-                    <button
-                      key={action.id}
-                      type="button"
-                      className="quick-action"
-                      onClick={() => setActiveView(action.id)}
-                    >
-                      <span className="quick-action__label">{action.label}</span>
-                      <span className="quick-action__description">{action.description}</span>
-                    </button>
-                  ))}
-                </div>
-              </section>
-            </>
-          ) : activeView === 'articoli' ? (
+                <section className="panel" aria-labelledby="azioni-rapide">
+                  <div className="section-heading">
+                    <p className="section-heading__eyebrow">Operatività</p>
+                    <h3 id="azioni-rapide">Azioni rapide</h3>
+                  </div>
+                  <div className="quick-actions">
+                    {quickActions.map((action) => (
+                      <button
+                        key={action.id}
+                        type="button"
+                        className="quick-action"
+                        onClick={() => setActiveView(action.id)}
+                      >
+                        <span className="quick-action__label">{action.label}</span>
+                        <span className="quick-action__description">{action.description}</span>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              </div>
+            ) : activeView === 'articoli' ? (
             importSheetData ? (
               <ArticlesImportWizard
                 sheetData={importSheetData}
@@ -1031,6 +1118,7 @@ function App() {
             ) : (
               <ArticlesView
                 articles={articles}
+                movements={movements}
                 codeQuery={articleCodeQuery}
                 descriptionQuery={articleDescriptionQuery}
                 importError={importError}
@@ -1090,7 +1178,8 @@ function App() {
           ) : (
             <PlaceholderView title={title} onBackToDashboard={() => setActiveView('dashboard')} />
           )}
-        </main>
+          </main>
+        </div>
       </div>
     </div>
   )

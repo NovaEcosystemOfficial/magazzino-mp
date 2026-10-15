@@ -11,7 +11,7 @@ export function SplashScreen({ onEnter }: SplashScreenProps) {
     <div className="splash-screen" role="main" aria-labelledby="splash-title">
       <div className="splash-screen__card splash-screen__animate">
         <div className="splash-screen__logo" aria-hidden="true">
-          <span className="splash-screen__logo-mark" />
+          <span className="splash-screen__logo-mark">MP</span>
         </div>
 
         <h1 id="splash-title" className="splash-screen__title">
@@ -19,7 +19,7 @@ export function SplashScreen({ onEnter }: SplashScreenProps) {
         </h1>
         <p className="splash-screen__subtitle">Gestione Materie Prime</p>
 
-        <button type="button" className="primary-button splash-screen__cta" onClick={onEnter}>
+        <button type="button" className="primary-button primary-button--cta splash-screen__cta" onClick={onEnter}>
           Entra nel gestionale
         </button>
 

@@ -1,3 +1,4 @@
+import { enrichArticleFromSourceFields } from '../excel/resolveArticleFields'
 import { parseNumericStock } from '../excel/articoliMapping'
 import type { ArticleRecord } from '../types/articles'
 import type { StockMovement } from '../types/movements'
@@ -15,6 +16,68 @@ export type ArticleStockBalance = {
   /** Giacenza attuale = iniziale + entrate − uscite. */
   currentStock: string
   currentStockValue: number
+}
+
+/** Chiave stabile per collegare articoli e movimenti (case/spazi). */
+export function normalizeArticleRef(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+/** True se il movimento appartiene all’articolo (articleId o articleCode). */
+export function movementMatchesArticle(
+  movement: StockMovement,
+  articleCode: string,
+): boolean {
+  const target = normalizeArticleRef(articleCode)
+  if (!target) {
+    return false
+  }
+  const byId = normalizeArticleRef(movement.articleId)
+  if (byId && byId === target) {
+    return true
+  }
+  const byCode = normalizeArticleRef(movement.articleCode)
+  return Boolean(byCode && byCode === target)
+}
+
+/** Movimenti dell’articolo, stessa regola usata da scheda e anagrafica. */
+export function movementsForArticle(
+  movements: StockMovement[],
+  articleCode: string,
+): StockMovement[] {
+  return movements.filter((movement) => movementMatchesArticle(movement, articleCode))
+}
+
+/**
+ * Indice movimenti → chiave articolo normalizzata.
+ * Ogni movimento è indicizzato sia per articleId sia per articleCode.
+ */
+export function indexMovementsByArticle(
+  movements: StockMovement[],
+): Map<string, StockMovement[]> {
+  const index = new Map<string, StockMovement[]>()
+
+  const add = (rawKey: string, movement: StockMovement) => {
+    const key = normalizeArticleRef(rawKey)
+    if (!key) {
+      return
+    }
+    const list = index.get(key)
+    if (list) {
+      if (!list.includes(movement)) {
+        list.push(movement)
+      }
+    } else {
+      index.set(key, [movement])
+    }
+  }
+
+  for (const movement of movements) {
+    add(movement.articleId, movement)
+    add(movement.articleCode, movement)
+  }
+
+  return index
 }
 
 /**
@@ -76,32 +139,21 @@ export function buildArticleStockBalance(
 
 /**
  * Allinea in memoria currentStock alla formula, senza scrivere IndexedDB.
- * Usato da UI/report/backup export per valori coerenti tra schermate.
+ * Usa la stessa base stock della scheda (enrich) e la stessa associazione movimenti.
  */
 export function reconcileArticlesWithMovements(
   articles: ArticleRecord[],
   movements: StockMovement[],
 ): ArticleRecord[] {
-  const byArticleId = new Map<string, StockMovement[]>()
-  for (const movement of movements) {
-    const key = movement.articleId.trim().toLowerCase()
-    if (!key) {
-      continue
-    }
-    const list = byArticleId.get(key)
-    if (list) {
-      list.push(movement)
-    } else {
-      byArticleId.set(key, [movement])
-    }
-  }
+  const index = indexMovementsByArticle(movements)
 
   return articles.map((article) => {
-    const key = article.code.trim().toLowerCase()
-    const articleMovements = byArticleId.get(key) ?? []
+    const enriched = enrichArticleFromSourceFields(article)
+    const key = normalizeArticleRef(enriched.code)
+    const articleMovements = key ? (index.get(key) ?? []) : []
     return {
-      ...article,
-      currentStock: computeCurrentStock(article.stock, articleMovements),
+      ...enriched,
+      currentStock: computeCurrentStock(enriched.stock, articleMovements),
     }
   })
 }

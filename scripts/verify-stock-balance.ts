@@ -3,6 +3,7 @@ import type { StockMovement } from '../src/types/movements.ts'
 import {
   buildArticleStockBalance,
   computeCurrentStock,
+  movementsForArticle,
   reconcileArticlesWithMovements,
   summarizeMovements,
 } from '../src/utils/stockBalance.ts'
@@ -13,12 +14,13 @@ function movement(
   type: 'CARICO' | 'SCARICO',
   quantity: number,
   id: string,
+  refs?: { articleId?: string; articleCode?: string },
 ): StockMovement {
   return {
     id,
     type,
-    articleId: 'test-1',
-    articleCode: 'TEST-1',
+    articleId: refs?.articleId ?? 'test-1',
+    articleCode: refs?.articleCode ?? 'TEST-1',
     quantity,
     movementDate: '2026-10-13',
     registeredAt: '2026-10-13T10:00:00.000Z',
@@ -76,5 +78,48 @@ assert.equal(reconciled[0]?.currentStock, '90')
 assert.equal(reconciled[0]?.stock, '100')
 assert.equal(reconciled[0]?.totalReceived, '999')
 assert.equal(afterSecondScarico.length, 4)
+
+// Caso Davide: iniziale 0, entrate 95, uscite 11 → anagrafica e scheda devono dare 84
+const gunArticle: ArticleRecord = {
+  code: 'MR108 ps12 GUNMETAL',
+  description: 'MR108 ps12 GUNMETAL',
+  unitOfMeasure: 'pz',
+  stock: '0',
+  currentStock: '0', // campo denormalizzato stale in IndexedDB
+  status: 'attivo',
+  category: '—',
+  supplier: '—',
+  minStock: '—',
+  totalReceived: '—',
+  sourceFields: {},
+}
+const gunMovements: StockMovement[] = [
+  movement('CARICO', 50, 'g1', {
+    articleId: 'mr108 ps12 gunmetal',
+    articleCode: 'MR108 ps12 GUNMETAL',
+  }),
+  movement('CARICO', 45, 'g2', {
+    articleId: 'MR108 ps12 GUNMETAL',
+    articleCode: 'MR108 ps12 GUNMETAL',
+  }),
+  movement('SCARICO', 11, 'g3', {
+    articleId: 'mr108 ps12 gunmetal',
+    articleCode: 'MR108 ps12 GUNMETAL',
+  }),
+]
+const gunBalance = buildArticleStockBalance(
+  gunArticle.stock,
+  movementsForArticle(gunMovements, gunArticle.code),
+)
+assert.equal(gunBalance.totalIn, 95)
+assert.equal(gunBalance.totalOut, 11)
+assert.equal(gunBalance.currentStock, '84')
+assert.equal(
+  computeCurrentStock(gunArticle.stock, movementsForArticle(gunMovements, gunArticle.code)),
+  '84',
+)
+const gunReconciled = reconcileArticlesWithMovements([gunArticle], gunMovements)
+assert.equal(gunReconciled[0]?.currentStock, '84')
+assert.equal(gunReconciled[0]?.stock, '0')
 
 console.log('STOCK_BALANCE_CHECKS_OK')

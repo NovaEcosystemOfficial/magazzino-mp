@@ -359,7 +359,7 @@ export function ReportView({ articles, movements }: ReportViewProps) {
                   </td>
                 </tr>
               ) : (
-                report.lowStockRows.map((row) => (
+                report.lowStockRows.slice(0, 5).map((row) => (
                   <tr
                     key={row.code}
                     className={row.belowMin ? 'import-row--warning' : undefined}
@@ -386,6 +386,52 @@ export function ReportView({ articles, movements }: ReportViewProps) {
             </tbody>
           </table>
         </div>
+        {report.lowStockRows.length > 5 ? (
+          <details className="report-more">
+            <summary>
+              Altri {report.lowStockRows.length - 5} articoli con scorta minima
+            </summary>
+            <div className="table-wrap report-more__table">
+              <table className="articles-table import-preview-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Codice</th>
+                    <th scope="col">Descrizione</th>
+                    <th scope="col">UdM</th>
+                    <th scope="col">Giacenza attuale</th>
+                    <th scope="col">Scorta minima</th>
+                    <th scope="col">Stato</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.lowStockRows.slice(5).map((row) => (
+                    <tr
+                      key={row.code}
+                      className={row.belowMin ? 'import-row--warning' : undefined}
+                    >
+                      <td>{row.code}</td>
+                      <td>{row.description}</td>
+                      <td>{row.unitOfMeasure}</td>
+                      <td>{row.currentStock}</td>
+                      <td>{row.minStock}</td>
+                      <td>
+                        <span
+                          className={
+                            row.belowMin
+                              ? 'status-pill status-pill--warning'
+                              : 'status-pill status-pill--ok'
+                          }
+                        >
+                          {row.belowMin ? 'Sotto soglia' : 'Ok'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        ) : null}
       </div>
 
       <div className="panel">

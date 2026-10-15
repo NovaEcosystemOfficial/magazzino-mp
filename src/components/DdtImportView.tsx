@@ -405,6 +405,33 @@ export function DdtImportView({ articles, activeBrandId, onRegistered }: DdtImpo
         </p>
       </div>
 
+      <div className="context-banner" role="status">
+        <div className="context-banner__item">
+          <span className="context-banner__label">Brand archivio</span>
+          <strong className="context-banner__value">{getBrandLabel(selectedBrandId)}</strong>
+        </div>
+        {header.documentNumber ? (
+          <div className="context-banner__item">
+            <span className="context-banner__label">Documento</span>
+            <strong className="context-banner__value">
+              DDT {header.documentNumber}
+              {header.documentDate ? ` · ${header.documentDate}` : ''}
+            </strong>
+          </div>
+        ) : (
+          <div className="context-banner__item">
+            <span className="context-banner__label">Documento</span>
+            <strong className="context-banner__value">In attesa di estrazione</strong>
+          </div>
+        )}
+        {fileName ? (
+          <div className="context-banner__item">
+            <span className="context-banner__label">File</span>
+            <strong className="context-banner__value">{fileName}</strong>
+          </div>
+        ) : null}
+      </div>
+
       {error ? (
         <div className="alert alert--error" role="alert">
           <p>{error}</p>
@@ -450,11 +477,11 @@ export function DdtImportView({ articles, activeBrandId, onRegistered }: DdtImpo
         <div className="import-wizard__actions">
           <button
             type="button"
-            className="primary-button"
+            className="primary-button primary-button--cta"
             disabled={isExtracting || isSaving}
             onClick={() => fileInputRef.current?.click()}
           >
-            {isExtracting ? 'Estrazione in corso…' : 'Seleziona PDF'}
+            {isExtracting ? 'Estrazione in corso…' : 'Importa DDT'}
           </button>
           {fileName ? (
             <p className="helper-text">
@@ -875,7 +902,7 @@ export function DdtImportView({ articles, activeBrandId, onRegistered }: DdtImpo
             </button>
             <button
               type="button"
-              className="primary-button"
+              className="primary-button primary-button--cta"
               disabled={isSaving || (brandMismatch && !brandMismatchAcknowledged)}
               onClick={() => {
                 void handleConfirmRegister()

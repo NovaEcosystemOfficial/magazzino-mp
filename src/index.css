@@ -1,40 +1,87 @@
 :root {
-  /* Design system stile WMS professionale (riferimento NeXseed) */
-  --mr-anthracite: #1f2933;
-  --mr-bg: #f3f4f6;
-  --mr-surface: #ffffff;
-  --mr-primary: #3e705b;
-  --mr-primary-soft: rgba(62, 112, 91, 0.12);
-  --mr-accent-blue: #4b7bec;
-  --mr-accent-blue-soft: rgba(75, 123, 236, 0.12);
-  --mr-accent-orange: #e67e22;
-  --mr-accent-orange-soft: rgba(230, 126, 34, 0.12);
-  --mr-text: #2c3a47;
-  --mr-text-muted: #6b7785;
-  --mr-text-soft: #8a949e;
-  --mr-border: #e5e7eb;
-  --mr-border-strong: #d1d5db;
-  --mr-danger: #c0392b;
-  --mr-danger-bg: rgba(192, 57, 43, 0.08);
-  --mr-danger-border: rgba(192, 57, 43, 0.28);
-  --mr-warning: #b7791f;
-  --mr-warning-bg: rgba(183, 121, 31, 0.1);
-  --mr-warning-border: rgba(183, 121, 31, 0.3);
-  --mr-success-bg: rgba(62, 112, 91, 0.1);
-  --mr-success-border: rgba(62, 112, 91, 0.3);
-  --mr-radius: 0.75rem;
-  --mr-radius-sm: 0.5rem;
-  --mr-shadow: 0 1px 3px rgba(31, 41, 51, 0.06);
-  --mr-shadow-md: 0 4px 14px rgba(31, 41, 51, 0.06);
-  --mr-sidebar-width: 248px;
-  --mr-font:
-    'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  /* Luxury Enterprise 2026 — Bianco + avorio scuro (no cipria) */
+  --mp-ivory: #e4ddd1;
+  --mp-ivory-deep: #d6cebf;
+  --mp-paper: #ebe5da;
+  --mp-surface: #fff;
+  --mp-ink: #050608;
+  --mp-ink-soft: #12151a;
+  --mp-muted: #3a4048;
+  --mp-faint: #5c646e;
+  --mp-line: #c9c0b0;
+  --mp-line-strong: #b0a692;
+  --mp-forest: #102a43;
+  --mp-forest-mid: #183a5a;
+  --mp-forest-soft: rgba(16, 42, 67, 0.09);
+  --mp-bronze: #8f6f45;
+  --mp-bronze-soft: rgba(143, 111, 69, 0.14);
+  --mp-danger: #a33b2a;
+  --mp-danger-bg: rgba(163, 59, 42, 0.09);
+  --mp-danger-border: rgba(163, 59, 42, 0.3);
+  --mp-warning: #8a5f18;
+  --mp-warning-bg: rgba(138, 95, 24, 0.12);
+  --mp-warning-border: rgba(138, 95, 24, 0.32);
+  --mp-success-bg: rgba(16, 42, 67, 0.08);
+  --mp-success-border: rgba(16, 42, 67, 0.24);
+  --mp-radius: 0.4rem;
+  --mp-radius-lg: 0.7rem;
+  --mp-shadow: 0 1px 0 rgba(13, 17, 23, 0.05);
+  --mp-raised:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 0 -1px 0 rgba(13, 17, 23, 0.08),
+    0 1px 2px rgba(13, 17, 23, 0.06),
+    0 3px 8px rgba(13, 17, 23, 0.08);
+  --mp-raised-strong:
+    inset 0 1px 0 rgba(255, 255, 255, 1),
+    inset 0 -2px 0 rgba(13, 17, 23, 0.1),
+    0 2px 3px rgba(13, 17, 23, 0.07),
+    0 5px 14px rgba(13, 17, 23, 0.1);
+  --mp-raised-dark:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.35),
+    0 2px 4px rgba(0, 0, 0, 0.18),
+    0 5px 14px rgba(0, 0, 0, 0.16);
+  --mp-sidebar-width: 13.5rem;
+  --mp-header-height: 4.25rem;
+  --mp-font-display: 'Cormorant Garamond', 'Times New Roman', Georgia, serif;
+  --mp-font-ui: 'Outfit', 'Segoe UI', system-ui, sans-serif;
 
-  font-family: var(--mr-font);
+  /* Alias legacy */
+  --mr-anthracite: var(--mp-ink);
+  --mr-bg: var(--mp-ivory);
+  --mr-surface: var(--mp-surface);
+  --mr-primary: var(--mp-forest);
+  --mr-primary-hover: var(--mp-forest-mid);
+  --mr-primary-soft: var(--mp-forest-soft);
+  --mr-accent-blue: #1a4a6e;
+  --mr-accent-blue-soft: rgba(26, 74, 110, 0.12);
+  --mr-accent-orange: var(--mp-bronze);
+  --mr-accent-orange-soft: var(--mp-bronze-soft);
+  --mr-text: var(--mp-ink-soft);
+  --mr-text-muted: var(--mp-muted);
+  --mr-text-soft: var(--mp-faint);
+  --mr-border: var(--mp-line);
+  --mr-border-strong: var(--mp-line-strong);
+  --mr-danger: var(--mp-danger);
+  --mr-danger-bg: var(--mp-danger-bg);
+  --mr-danger-border: var(--mp-danger-border);
+  --mr-warning: var(--mp-warning);
+  --mr-warning-bg: var(--mp-warning-bg);
+  --mr-warning-border: var(--mp-warning-border);
+  --mr-success-bg: var(--mp-success-bg);
+  --mr-success-border: var(--mp-success-border);
+  --mr-radius: var(--mp-radius-lg);
+  --mr-radius-sm: var(--mp-radius);
+  --mr-shadow: var(--mp-shadow);
+  --mr-shadow-md: var(--mp-raised);
+  --mr-sidebar-width: var(--mp-sidebar-width);
+  --mr-font: var(--mp-font-ui);
+
+  font-family: var(--mp-font-ui);
   line-height: 1.5;
   font-weight: 400;
-  color: var(--mr-text);
-  background: var(--mr-bg);
+  color: var(--mp-ink-soft);
+  background: var(--mp-ivory);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -56,7 +103,7 @@ body,
 
 body {
   min-width: 320px;
-  background: var(--mr-bg);
+  background: var(--mp-ivory);
 }
 
 button,

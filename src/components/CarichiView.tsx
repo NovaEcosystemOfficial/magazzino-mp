@@ -380,7 +380,7 @@ export function CarichiView({ articles, recentCarichi, onRegistered }: CarichiVi
         <div className="import-wizard__actions" style={{ marginTop: '1rem' }}>
           <button
             type="button"
-            className="primary-button"
+            className="primary-button primary-button--cta"
             disabled={!canPrepareConfirm || isSaving}
             onClick={handlePrepareConfirm}
           >
@@ -443,13 +443,13 @@ export function CarichiView({ articles, recentCarichi, onRegistered }: CarichiVi
             </button>
             <button
               type="button"
-              className="primary-button"
+              className="primary-button primary-button--cta"
               disabled={isSaving}
               onClick={() => {
                 void handleConfirm()
               }}
             >
-              {isSaving ? 'Salvataggio…' : 'Conferma carico'}
+              {isSaving ? 'Salvataggio…' : 'Registra carico'}
             </button>
           </div>
         </div>

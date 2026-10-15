@@ -15,11 +15,21 @@ type ArticleDetailViewProps = {
   onBack: () => void
 }
 
-function DetailField({ label, value }: { label: string; value: string }) {
+function DetailField({
+  label,
+  value,
+  emphasize,
+}: {
+  label: string
+  value: string
+  emphasize?: boolean
+}) {
   return (
     <div className="detail-field">
       <dt className="detail-field__label">{label}</dt>
-      <dd className="detail-field__value">{value?.trim() ? value : '—'}</dd>
+      <dd className={`detail-field__value${emphasize ? ' detail-field__value--stock' : ''}`}>
+        {value?.trim() ? value : '—'}
+      </dd>
     </div>
   )
 }
@@ -126,7 +136,7 @@ export function ArticleDetailView({
           <DetailField label="Giacenza iniziale (Excel)" value={view.stock} />
           <DetailField label="Totale entrate" value={balance.totalInLabel} />
           <DetailField label="Totale uscite" value={balance.totalOutLabel} />
-          <DetailField label="Giacenza attuale" value={balance.currentStock} />
+          <DetailField label="Giacenza attuale" value={balance.currentStock} emphasize />
           <DetailField label="Stato" value={view.status} />
           <DetailField label="Categoria" value={view.category} />
           <DetailField label="Fornitore abituale" value={view.supplier} />
