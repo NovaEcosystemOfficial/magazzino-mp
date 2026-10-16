@@ -4,10 +4,13 @@ import { BRAND_DEFINITIONS, getBrandLabel, type BrandId } from './brands/brands'
 import { getActiveBrandId, setActiveBrandId } from './brands/brandPreference'
 import { ArticleDetailView } from './components/ArticleDetailView'
 import { ArticlesImportWizard } from './components/ArticlesImportWizard'
+import { useAuth } from './auth/AuthContext'
+import { AuthLoadingScreen, AuthMisconfiguredScreen } from './components/AuthGateScreens'
 import { BrandSelectScreen } from './components/BrandSelectScreen'
 import { CarichiView } from './components/CarichiView'
 import { DdtImportView } from './components/DdtImportView'
 import { DdtRegistryView } from './components/DdtRegistryView'
+import { LoginScreen } from './components/LoginScreen'
 import {
   hasRecentMovementActivity,
   MovementsActivityChart,
@@ -495,6 +498,7 @@ function PlaceholderView({
 }
 
 function App() {
+  const auth = useAuth()
   const [showSplash, setShowSplash] = useState(() => !hasSeenSplashScreen())
   /** Dopo lo splash (o all’apertura se splash già visto) richiede scelta brand esplicita. */
   const [showBrandSelect, setShowBrandSelect] = useState(() => hasSeenSplashScreen())
@@ -774,6 +778,25 @@ function App() {
     }
   }
 
+  if (auth.status === 'misconfigured') {
+    return (
+      <AuthMisconfiguredScreen
+        message={
+          auth.errorMessage ??
+          'Configurazione Firebase incompleta. Verificare le variabili VITE_FIREBASE_* in .env.local.'
+        }
+      />
+    )
+  }
+
+  if (auth.status === 'loading') {
+    return <AuthLoadingScreen />
+  }
+
+  if (auth.status === 'unauthenticated') {
+    return <LoginScreen />
+  }
+
   if (showSplash) {
     return <SplashScreen onEnter={handleEnterGestionale} />
   }
@@ -817,6 +840,14 @@ function App() {
 
         <div className="app-header__meta">
           <span className="app-header__date">{currentDate}</span>
+          <div className="app-header__active" aria-label="Utente connesso">
+            <span className="app-header__active-label">
+              {auth.profile?.role === 'admin' ? 'Admin' : 'Operatore'}
+            </span>
+            <span className="app-header__active-value">
+              {auth.profile?.displayName ?? auth.profile?.username ?? '—'}
+            </span>
+          </div>
           <div className="app-header__active" aria-label="Brand attivo">
             <span className="app-header__active-label">Attivo</span>
             <span className="app-header__active-value">{activeBrandLabel}</span>
@@ -858,6 +889,15 @@ function App() {
               disabled={isSavingImport}
             >
               Schermata brand
+            </button>
+            <button
+              type="button"
+              className="sidebar__change-brand"
+              onClick={() => {
+                void auth.signOut()
+              }}
+            >
+              Esci
             </button>
           </div>
         </aside>

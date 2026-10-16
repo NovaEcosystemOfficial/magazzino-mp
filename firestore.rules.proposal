@@ -1,0 +1,33 @@
+rules_version = '2';
+// PROPOSTA — NON DISTRIBUITA AUTOMATICAMENTE.
+// Da revisionare e pubblicare manualmente dalla Console Firebase o con deploy esplicito.
+// Obiettivo fase login: profilo utente leggibile solo dal proprietario; nessun accesso pubblico;
+// nessun self-elevate a admin; brands/** ancora chiuso (magazzino resta IndexedDB).
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Profili creati/aggiornati solo da amministratori (Console / futuro backend Admin).
+    // Il client può solo LEGGERE il proprio documento.
+    match /users/{userId} {
+      allow read: if isSelf(userId);
+      allow write: if false;
+    }
+
+    // Magazzino cloud non ancora in uso in questa fase.
+    match /brands/{brandId}/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

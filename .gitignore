@@ -11,6 +11,8 @@ node_modules
 dist
 dist-ssr
 *.local
+.env.local
+.env.*.local
 
 # Artefatti locali di analisi DDT (il PDF di test può restare in fixtures/)
 fixtures/*-items.json
