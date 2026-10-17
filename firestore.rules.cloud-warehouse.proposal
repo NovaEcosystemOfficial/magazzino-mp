@@ -1,0 +1,216 @@
+rules_version = '2';
+// =============================================================================
+// BOZZA magazzino cloud — Spark-compatible (SENZA Cloud Functions obbligatorie).
+// NON PUBBLICARE FINCHÉ NON APPROVATO.
+//
+// Percorso Spark (default):
+//   - CARICO/SCARICO: client runTransaction (movimento create + stockVersion bump)
+//   - Auth + users/{uid} active/role; performedByUid == request.auth.uid
+//   - Contro PC onesti: transazioni Firestore serializzano sullo stesso articolo
+//   - Contro client malevolo: un operator può ancora inventare un bump di giacenza
+//     (limite Rules). Per blocco malevolo serve backend Admin gratuito (es. Vercel
+//     Serverless) o Callable Blaze — vedi docs/spark-senza-blaze.md
+//
+// Percorso opzionale Blaze: VITE_USE_STOCK_CALLABLE + Functions (già nel repo).
+// =============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function userExists() {
+      return isSignedIn() && exists(userPath());
+    }
+
+    function userDoc() {
+      return get(userPath()).data;
+    }
+
+    function isActive() {
+      return userExists() && userDoc().active == true;
+    }
+
+    function isAdmin() {
+      return isActive() && userDoc().role == 'admin';
+    }
+
+    function isOperator() {
+      return isActive() &&
+        (userDoc().role == 'operator' || userDoc().role == 'admin');
+    }
+
+    function isValidBrandId(brandId) {
+      return brandId in ['marina-raphael', 'elie-saab', 'swarovski'];
+    }
+
+    function stockVersionOf(data) {
+      return data.keys().hasAny(['stockVersion']) && data.stockVersion is number
+        ? data.stockVersion
+        : 0;
+    }
+
+    function movementRequiredKeys() {
+      return [
+        'id',
+        'type',
+        'articleId',
+        'articleCode',
+        'quantity',
+        'movementDate',
+        'registeredAt',
+        'supplier',
+        'reason',
+        'documentRef',
+        'notes',
+        'idempotencyKey',
+        'performedByUid',
+        'performedByUsername',
+      ];
+    }
+
+    function isValidMovementCreate(movementId) {
+      return request.resource.data.keys().hasAll(movementRequiredKeys())
+        && request.resource.data.id == movementId
+        && request.resource.data.idempotencyKey == movementId
+        && request.resource.data.type in ['CARICO', 'SCARICO']
+        && request.resource.data.quantity is number
+        && request.resource.data.quantity > 0
+        && request.resource.data.articleId is string
+        && request.resource.data.articleId.size() > 0
+        && request.resource.data.articleCode is string
+        && request.resource.data.articleCode.size() > 0
+        && request.resource.data.movementDate is string
+        && request.resource.data.registeredAt is string
+        && request.resource.data.supplier is string
+        && request.resource.data.reason is string
+        && request.resource.data.documentRef is string
+        && request.resource.data.notes is string
+        && request.resource.data.idempotencyKey is string
+        && request.resource.data.idempotencyKey.size() > 0
+        && request.resource.data.performedByUsername is string
+        && (
+          // Operatori: UID Auth non falsificabile.
+          // Admin in migrazione: può preservare performedByUid storico.
+          request.resource.data.performedByUid == request.auth.uid
+          || (isAdmin() && request.resource.data.performedByUid is string)
+        );
+    }
+
+    function articleCreateKeys() {
+      return [
+        'code',
+        'codeKey',
+        'description',
+        'unitOfMeasure',
+        'stock',
+        'currentStock',
+        'status',
+        'category',
+        'supplier',
+        'minStock',
+        'totalReceived',
+        'sourceFields',
+      ];
+    }
+
+    function isValidArticleCreate(codeKey) {
+      return request.resource.data.keys().hasAll(articleCreateKeys())
+        && request.resource.data.codeKey == codeKey
+        && request.resource.data.code is string
+        && request.resource.data.code.size() > 0
+        && request.resource.data.stock is string
+        && request.resource.data.currentStock is string
+        && stockVersionOf(request.resource.data) == 0
+        && (
+          !request.resource.data.keys().hasAny(['updatedByUid'])
+          || request.resource.data.updatedByUid == request.auth.uid
+        );
+    }
+
+    function isAnagraficaOnlyUpdate() {
+      return request.resource.data.currentStock == resource.data.currentStock
+        && stockVersionOf(request.resource.data) == stockVersionOf(resource.data)
+        && (
+          isAdmin()
+          || request.resource.data.stock == resource.data.stock
+        );
+    }
+
+    // Carico/scarico: stockVersion +1 e updatedByUid = auth (uid non falsificabile).
+    function isStockBumpUpdate() {
+      return stockVersionOf(request.resource.data) == stockVersionOf(resource.data) + 1
+        && request.resource.data.updatedByUid == request.auth.uid
+        && request.resource.data.currentStock is string
+        && request.resource.data.stock == resource.data.stock
+        && request.resource.data.codeKey == resource.data.codeKey
+        && request.resource.data.code == resource.data.code;
+    }
+
+    // Admin: riconciliazione migrazione (può allineare currentStock).
+    function isAdminStockReconcile() {
+      return isAdmin()
+        && request.resource.data.codeKey == resource.data.codeKey
+        && request.resource.data.code == resource.data.code;
+    }
+
+    function isValidArticleUpdate() {
+      return isAnagraficaOnlyUpdate()
+        || isStockBumpUpdate()
+        || isAdminStockReconcile();
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn() && request.auth.uid == userId;
+      allow write: if false;
+    }
+
+    match /brands/{brandId} {
+      allow read, write: if false;
+
+      match /articles/{codeKey} {
+        allow read: if isOperator() && isValidBrandId(brandId);
+        allow create: if isOperator()
+          && isValidBrandId(brandId)
+          && isValidArticleCreate(codeKey);
+        allow update: if isOperator()
+          && isValidBrandId(brandId)
+          && isValidArticleUpdate();
+        allow delete: if false;
+      }
+
+      match /movements/{movementId} {
+        allow read: if isOperator() && isValidBrandId(brandId);
+        allow create: if isOperator()
+          && isValidBrandId(brandId)
+          && isValidMovementCreate(movementId);
+        allow update, delete: if false;
+      }
+
+      match /ddtClaims/{claimId} {
+        allow read: if isOperator() && isValidBrandId(brandId);
+        allow create: if isOperator()
+          && isValidBrandId(brandId)
+          && request.resource.data.claimedByUid == request.auth.uid
+          && request.resource.data.documentNumber is string
+          && request.resource.data.supplier is string
+          && request.resource.data.documentDateIso is string;
+        allow update, delete: if false;
+      }
+
+      match /meta/{docId} {
+        allow read: if isAdmin() && isValidBrandId(brandId);
+        allow write: if isAdmin() && isValidBrandId(brandId);
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

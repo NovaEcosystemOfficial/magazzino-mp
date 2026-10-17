@@ -48,7 +48,8 @@ export function MovimentiView({ movements, articles }: MovimentiViewProps) {
         <p className="section-heading__eyebrow">Storico</p>
         <h3 id="movimenti-title">Movimenti</h3>
         <p className="section-heading__description">
-          Elenco dei carichi e degli scarichi salvati in IndexedDB. I dati restano dopo refresh o
+          Elenco dei carichi e degli scarichi dell’archivio attivo. I movimenti registrati non
+          sono modificabili; le correzioni avvengono con movimenti compensativi. I dati restano dopo refresh o
           riapertura.
         </p>
       </div>

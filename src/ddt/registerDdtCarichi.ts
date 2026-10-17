@@ -1,9 +1,16 @@
 import type { BrandId } from '../brands/brands'
+import type { MovementActor } from '../types/actor'
 import {
   formatDdtAlreadyRegisteredMessage,
   type DdtDocumentIdentity,
 } from './ddtDocumentIdentity'
-import { findCarichiForDdtDocument, registerCarico, type RegisterCaricoResult } from '../storage/movementsDb'
+import { claimCloudDdtDocument } from '../cloud/ddtClaim'
+import { isCloudWarehouseActive } from '../storage/dataSource'
+import {
+  findCarichiForDdtDocument,
+  registerCarico,
+  type RegisterCaricoResult,
+} from '../storage/warehouseRepository'
 import type { DdtEditableRow, DdtHeaderFields, DdtImportSummary } from '../types/ddt'
 
 function normalizeKeyPart(value: string): string {
@@ -39,6 +46,8 @@ export type DdtRegistrationInput = {
   rows: DdtEditableRow[]
   /** Archivio brand su cui registrare i carichi (obbligatorio per isolamento). */
   brandId: BrandId
+  /** Obbligatorio in modalità Firestore. */
+  actor?: MovementActor
 }
 
 export type DdtRegistrationResult = {
@@ -120,6 +129,31 @@ export async function registerDdtCarichi(
     }
   }
 
+  // Cloud: claim create-only anti-race multi-PC sullo stesso DDT.
+  if (isCloudWarehouseActive()) {
+    if (!input.actor?.uid) {
+      throw new Error('Registrazione DDT cloud richiede utente autenticato.')
+    }
+    const claim = await claimCloudDdtDocument(brandId, identity, input.actor)
+    if (claim.alreadyClaimed) {
+      const message = formatDdtAlreadyRegisteredMessage(identity, 1)
+      return {
+        summary: {
+          fileName: input.fileName,
+          documentNumber,
+          documentDateIso,
+          supplier,
+          registered: 0,
+          skippedAlreadyApplied: 1,
+          excluded: input.rows.filter((row) => !row.included).length,
+          messages: [`${message} (claim cloud già presente).`],
+          alreadyRegisteredDocument: true,
+        },
+        results: [],
+      }
+    }
+  }
+
   const { registrable, blocked } = getRegistrableRows(input.rows)
   if (registrable.length === 0) {
     throw new Error(
@@ -165,6 +199,7 @@ export async function registerDdtCarichi(
         idempotencyKey,
       },
       brandId,
+      input.actor,
     )
 
     results.push(result)

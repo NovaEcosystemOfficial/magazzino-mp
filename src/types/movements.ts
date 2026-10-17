@@ -29,6 +29,10 @@ export type StockMovement = {
   documentRef: string
   notes: string
   idempotencyKey: string
+  /** UID Firebase Auth (obbligatorio in cloud; opzionale in IndexedDB legacy). */
+  performedByUid?: string
+  /** Username denormalizzato (solo display). */
+  performedByUsername?: string
 }
 
 export type CaricoInput = {
@@ -83,5 +87,11 @@ export function normalizeStockMovement(
     documentRef: raw.documentRef,
     notes: raw.notes,
     idempotencyKey: raw.idempotencyKey,
+    ...(typeof raw.performedByUid === 'string' && raw.performedByUid
+      ? { performedByUid: raw.performedByUid }
+      : {}),
+    ...(typeof raw.performedByUsername === 'string'
+      ? { performedByUsername: raw.performedByUsername }
+      : {}),
   }
 }

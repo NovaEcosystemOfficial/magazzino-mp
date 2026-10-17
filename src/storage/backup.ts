@@ -8,8 +8,15 @@ import {
 import { normalizeArticleRecord, type ArticleRecord } from '../types/articles'
 import { normalizeStockMovement, type StockMovement } from '../types/movements'
 import { reconcileArticlesWithMovements } from '../utils/stockBalance'
-import { loadAllArticles, replaceAllArticles } from './articlesDb'
-import { loadAllMovements, replaceAllMovements } from './movementsDb'
+import {
+  loadAllArticles as loadLocalArticles,
+  replaceAllArticles,
+} from './articlesDb'
+import {
+  loadAllMovements as loadLocalMovements,
+  replaceAllMovements,
+} from './movementsDb'
+import { loadAllArticles, loadAllMovements } from './warehouseRepository'
 
 export const BACKUP_FORMAT = 'magazzino-mr-backup' as const
 /** v1: solo articoli (MR). v2: articoli + movimenti (MR). v3: archivi per tutti i brand. */
@@ -29,7 +36,7 @@ export type MagazzinoBackup = {
   meta: {
     articleCount: number
     movementCount: number
-    source: 'indexeddb-local'
+    source: 'indexeddb-local' | 'active-data-source' | string
     brands?: BrandId[]
   }
   /** Compatibilità v1/v2 e riepilogo MR in v3. */
@@ -261,15 +268,19 @@ export function validateBackupPayload(payload: unknown): MagazzinoBackup {
   }
 }
 
-export async function createArticlesBackup(): Promise<MagazzinoBackup> {
+async function buildBackupFromLoader(
+  loadArticles: (brandId: BrandId) => Promise<ArticleRecord[]>,
+  loadMovements: (brandId: BrandId) => Promise<StockMovement[]>,
+  source: string,
+): Promise<MagazzinoBackup> {
   const archives: Partial<Record<BrandId, BrandArchive>> = {}
   let totalArticles = 0
   let totalMovements = 0
 
   for (const brand of BRAND_DEFINITIONS) {
     const [rawArticles, movements] = await Promise.all([
-      loadAllArticles(brand.id),
-      loadAllMovements(brand.id),
+      loadArticles(brand.id),
+      loadMovements(brand.id),
     ])
     const articles = reconcileArticlesWithMovements(rawArticles, movements)
     archives[brand.id] = { articles, movements }
@@ -286,13 +297,53 @@ export async function createArticlesBackup(): Promise<MagazzinoBackup> {
     meta: {
       articleCount: totalArticles,
       movementCount: totalMovements,
-      source: 'indexeddb-local',
+      source,
       brands: [...BRAND_IDS],
     },
     articles: mr.articles,
     movements: mr.movements,
     archives,
   }
+}
+
+/** Backup dalla sorgente attiva (IndexedDB o Firestore). */
+export async function createArticlesBackup(): Promise<MagazzinoBackup> {
+  return buildBackupFromLoader(loadAllArticles, loadAllMovements, 'active-data-source')
+}
+
+/**
+ * Backup esclusivamente da IndexedDB locale (obbligatorio prima della migrazione cloud).
+ * Non dipende dalla sorgente attiva.
+ */
+export async function createLocalIndexedDbBackup(): Promise<MagazzinoBackup> {
+  return buildBackupFromLoader(loadLocalArticles, loadLocalMovements, 'indexeddb-local')
+}
+
+/**
+ * Verifica che il backup sia utilizzabile come prerequisito migrazione:
+ * formato v3, tre brand, almeno un articolo o un movimento.
+ */
+export function assertValidMigrationBackup(backup: MagazzinoBackup): MagazzinoBackup {
+  const validated = validateBackupPayload(backup)
+  if (validated.version !== BACKUP_VERSION) {
+    throw new Error(
+      `Backup migrazione non valido: richiesta versione ${BACKUP_VERSION}, trovata ${validated.version}.`,
+    )
+  }
+  if (!validated.archives) {
+    throw new Error('Backup migrazione non valido: manca archives (v3).')
+  }
+  for (const brandId of BRAND_IDS) {
+    if (!validated.archives[brandId]) {
+      throw new Error(`Backup migrazione non valido: manca archives.${brandId}.`)
+    }
+  }
+  if (validated.meta.articleCount < 1 && validated.meta.movementCount < 1) {
+    throw new Error(
+      'Backup preventivo vuoto (0 articoli e 0 movimenti). Migrazione annullata.',
+    )
+  }
+  return validated
 }
 
 export function downloadBackupJson(backup: MagazzinoBackup): void {

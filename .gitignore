@@ -14,6 +14,17 @@ dist-ssr
 .env.local
 .env.*.local
 
+# Firebase Emulator (locale)
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+pubsub-debug.log
+
+# Cloud Functions build
+functions/node_modules/
+functions/lib/
+
 # Artefatti locali di analisi DDT (il PDF di test può restare in fixtures/)
 fixtures/*-items.json
 fixtures/*-raw.txt

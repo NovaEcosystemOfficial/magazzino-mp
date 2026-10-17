@@ -1,8 +1,13 @@
 rules_version = '2';
-// PROPOSTA — NON DISTRIBUITA AUTOMATICAMENTE.
+// PROPOSTA fase login — NON DISTRIBUITA AUTOMATICAMENTE da questa repo.
 // Da revisionare e pubblicare manualmente dalla Console Firebase o con deploy esplicito.
+//
 // Obiettivo fase login: profilo utente leggibile solo dal proprietario; nessun accesso pubblico;
-// nessun self-elevate a admin; brands/** ancora chiuso (magazzino resta IndexedDB).
+// nessun self-elevate a admin; brands/** chiuso (magazzino resta IndexedDB).
+//
+// Bozza rules per il futuro magazzino cloud (Fase 2A specifica, NON pubblicare ora):
+//   → firestore.rules.cloud-warehouse.proposal
+// Specifica: docs/fase-2a-modello-dati.md
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -21,7 +26,7 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Magazzino cloud non ancora in uso in questa fase.
+    // Magazzino cloud non ancora in uso: deny totale su brands/**.
     match /brands/{brandId}/{document=**} {
       allow read, write: if false;
     }

@@ -26,8 +26,17 @@ import {
   resetSplashScreenPreference,
 } from './splash/splashPreference'
 import { readArticoliWorkbook } from './excel/readArticoliWorkbook'
-import { loadAllArticles, persistNewArticles } from './storage/articlesDb'
-import { loadAllMovements } from './storage/movementsDb'
+import { movementActorFromAuth } from './auth/movementActor'
+import {
+  getActiveDataSource,
+  isCloudWarehouseActive,
+} from './storage/dataSource'
+import {
+  loadAllArticles,
+  loadAllMovements,
+  persistNewArticles,
+  subscribeWarehouse,
+} from './storage/warehouseRepository'
 import type {
   ArticoliImportSummary,
   ArticoliSheetData,
@@ -503,6 +512,8 @@ function App() {
   /** Dopo lo splash (o all’apertura se splash già visto) richiede scelta brand esplicita. */
   const [showBrandSelect, setShowBrandSelect] = useState(() => hasSeenSplashScreen())
   const [activeBrandId, setActiveBrandIdState] = useState<BrandId>(() => getActiveBrandId())
+  /** Incrementato al cambio sorgente IndexedDB ↔ Firestore per ricaricare/ri-sottoscrivere. */
+  const [dataSourceEpoch, setDataSourceEpoch] = useState(0)
   const [activeView, setActiveView] = useState<ViewId>('dashboard')
   const [articleCodeQuery, setArticleCodeQuery] = useState('')
   const [articleDescriptionQuery, setArticleDescriptionQuery] = useState('')
@@ -630,6 +641,7 @@ function App() {
 
   useEffect(() => {
     let cancelled = false
+    let unsubscribeLive: (() => void) | undefined
 
     const load = async () => {
       setIsLoadingArticles(true)
@@ -651,7 +663,7 @@ function App() {
           setStorageError(
             error instanceof Error
               ? error.message
-              : 'Impossibile caricare l’anagrafica da IndexedDB.',
+              : 'Impossibile caricare l’anagrafica magazzino.',
           )
         }
       } finally {
@@ -661,12 +673,42 @@ function App() {
       }
     }
 
-    void load()
+    void (async () => {
+      await load()
+      if (cancelled || !isCloudWarehouseActive()) {
+        return
+      }
+      let latestArticles: ArticleRecord[] = []
+      let latestMovements: StockMovement[] = []
+      unsubscribeLive = subscribeWarehouse(activeBrandId, {
+        onArticles: (stored) => {
+          if (cancelled) return
+          latestArticles = stored
+          setArticles(reconcileArticlesWithMovements(stored, latestMovements))
+        },
+        onMovements: (storedMovements) => {
+          if (cancelled) return
+          latestMovements = storedMovements
+          setMovements(storedMovements)
+          if (latestArticles.length > 0) {
+            setArticles(reconcileArticlesWithMovements(latestArticles, storedMovements))
+          }
+        },
+        onError: (error) => {
+          if (!cancelled) {
+            setStorageError(
+              `Sincronizzazione cloud: ${error.message}. I dati a video potrebbero non essere aggiornati.`,
+            )
+          }
+        },
+      })
+    })()
 
     return () => {
       cancelled = true
+      unsubscribeLive?.()
     }
-  }, [activeBrandId])
+  }, [activeBrandId, dataSourceEpoch])
 
   const refreshArticlesFromDb = async () => {
     const [stored, storedMovements] = await Promise.all([
@@ -736,7 +778,11 @@ function App() {
     setImportError(null)
 
     try {
-      const persistResult = await persistNewArticles(importedArticles, activeBrandId)
+      const persistResult = await persistNewArticles(
+        importedArticles,
+        activeBrandId,
+        movementActorFromAuth(auth.user, auth.profile),
+      )
       const stored = await refreshArticlesFromDb()
       const sampleSaved = persistResult.added[0] ?? persistResult.enrichedExisting[0]
       const sampleSummary = sampleSaved
@@ -744,6 +790,7 @@ function App() {
             `Esempio campi salvati (${sampleSaved.code}): giacenza=${sampleSaved.stock}; categoria=${sampleSaved.category}; scorta minima=${sampleSaved.minStock}; fornitore=${sampleSaved.supplier}.`,
           ]
         : []
+      const sourceLabel = isCloudWarehouseActive() ? 'Firestore' : 'IndexedDB'
 
       setImportSummary({
         ...summary,
@@ -753,7 +800,7 @@ function App() {
         persisted: true,
         messages: [
           ...summary.messages,
-          `Transazione IndexedDB completata. Totale articoli in archivio: ${stored.length}.`,
+          `Salvataggio ${sourceLabel} completato. Totale articoli in archivio: ${stored.length}.`,
           persistResult.enrichedExisting.length > 0
             ? `${persistResult.enrichedExisting.length} articolo/i già presenti sono stati arricchiti con campi mancanti (nessuna sovrascrittura dei valori già valorizzati).`
             : 'Nessun articolo esistente ha richiesto arricchimento.',
@@ -768,7 +815,7 @@ function App() {
       setImportError(
         error instanceof Error
           ? `Salvataggio non riuscito: ${error.message}. Nessun nuovo articolo è stato dichiarato salvato.`
-          : 'Salvataggio IndexedDB non riuscito. Nessun nuovo articolo è stato dichiarato salvato.',
+          : 'Salvataggio magazzino non riuscito. Nessun nuovo articolo è stato dichiarato salvato.',
       )
       setImportSummary(null)
       // Mantieni il wizard aperto solo se vogliamo riprovare; chiudiamo e mostriamo errore in Articoli.
@@ -846,6 +893,12 @@ function App() {
             </span>
             <span className="app-header__active-value">
               {auth.profile?.displayName ?? auth.profile?.username ?? '—'}
+            </span>
+          </div>
+          <div className="app-header__active" aria-label="Sorgente dati">
+            <span className="app-header__active-label">Dati</span>
+            <span className="app-header__active-value">
+              {getActiveDataSource() === 'firestore' ? 'Cloud' : 'Locale'}
             </span>
           </div>
           <div className="app-header__active" aria-label="Brand attivo">
@@ -1177,12 +1230,14 @@ function App() {
             <CarichiView
               articles={articles}
               recentCarichi={recentCarichi}
+              brandId={activeBrandId}
               onRegistered={refreshWarehouseFromDb}
             />
           ) : activeView === 'scarichi' ? (
             <ScarichiView
               articles={articles}
               recentScarichi={recentScarichi}
+              brandId={activeBrandId}
               onRegistered={refreshWarehouseFromDb}
             />
           ) : activeView === 'movimenti' ? (
@@ -1214,6 +1269,19 @@ function App() {
                 }
               }}
               onReenableSplash={handleReenableSplashForTesting}
+              onDataSourceChanged={async () => {
+                setDataSourceEpoch((n) => n + 1)
+                try {
+                  await refreshWarehouseFromDb()
+                  setStorageError(null)
+                } catch (error) {
+                  setStorageError(
+                    error instanceof Error
+                      ? error.message
+                      : 'Impossibile ricaricare dopo il cambio sorgente dati.',
+                  )
+                }
+              }}
             />
           ) : (
             <PlaceholderView title={title} onBackToDashboard={() => setActiveView('dashboard')} />

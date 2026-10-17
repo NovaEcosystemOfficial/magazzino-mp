@@ -3,6 +3,7 @@ import {
   findMovementsForDdtDocument,
   type DdtDocumentIdentity,
 } from '../ddt/ddtDocumentIdentity'
+import type { MovementActor } from '../types/actor'
 import {
   normalizeStockMovement,
   type CaricoInput,
@@ -119,6 +120,7 @@ export type RegisterCaricoResult = RegisterMovementResult
 export async function registerCarico(
   input: CaricoInput,
   brandId?: BrandId,
+  actor?: MovementActor,
 ): Promise<RegisterCaricoResult> {
   const code = input.articleCode.trim()
   if (!code) {
@@ -202,6 +204,12 @@ export async function registerCarico(
       documentRef,
       notes,
       idempotencyKey,
+      ...(actor?.uid
+        ? {
+            performedByUid: actor.uid,
+            performedByUsername: actor.username || actor.uid,
+          }
+        : {}),
     }
 
     const newStock = computeCurrentStock(article.stock, [...existingMovements, movement])
@@ -240,6 +248,7 @@ export async function registerCarico(
 export async function registerScarico(
   input: ScaricoInput,
   brandId?: BrandId,
+  actor?: MovementActor,
 ): Promise<RegisterMovementResult> {
   const code = input.articleCode.trim()
   if (!code) {
@@ -326,6 +335,12 @@ export async function registerScarico(
       documentRef,
       notes,
       idempotencyKey,
+      ...(actor?.uid
+        ? {
+            performedByUid: actor.uid,
+            performedByUsername: actor.username || actor.uid,
+          }
+        : {}),
     }
 
     const newStock = computeCurrentStock(article.stock, [...existingMovements, movement])

@@ -1,4 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
+import { useAuth } from '../auth/AuthContext'
+import { movementActorFromAuth } from '../auth/movementActor'
+import type { BrandId } from '../brands/brands'
 import type { ArticleRecord } from '../types/articles'
 import { SCARICO_REASONS, type StockMovement } from '../types/movements'
 import {
@@ -9,11 +12,12 @@ import {
   subtractQuantities,
   todayLocalIsoDate,
 } from '../utils/quantity'
-import { registerScarico } from '../storage/movementsDb'
+import { registerScarico } from '../storage/warehouseRepository'
 
 type ScarichiViewProps = {
   articles: ArticleRecord[]
   recentScarichi: StockMovement[]
+  brandId: BrandId
   onRegistered: () => Promise<void> | void
 }
 
@@ -24,7 +28,8 @@ function createIdempotencyKey(): string {
   return `scarico-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
-export function ScarichiView({ articles, recentScarichi, onRegistered }: ScarichiViewProps) {
+export function ScarichiView({ articles, recentScarichi, brandId, onRegistered }: ScarichiViewProps) {
+  const auth = useAuth()
   const [search, setSearch] = useState('')
   const [selectedCode, setSelectedCode] = useState<string | null>(null)
   const [quantity, setQuantity] = useState('')
@@ -158,16 +163,20 @@ export function ScarichiView({ articles, recentScarichi, onRegistered }: Scarich
     setError(null)
 
     try {
-      const result = await registerScarico({
-        articleCode: selectedArticle.code,
-        quantity: quantityParsed.value,
-        movementDate,
-        reason: resolvedReason,
-        documentRef,
-        notes,
-        idempotencyKey: idempotencyKeyRef.current,
-        allowOverdraft: authorizeOverdraft,
-      })
+      const result = await registerScarico(
+        {
+          articleCode: selectedArticle.code,
+          quantity: quantityParsed.value,
+          movementDate,
+          reason: resolvedReason,
+          documentRef,
+          notes,
+          idempotencyKey: idempotencyKeyRef.current,
+          allowOverdraft: authorizeOverdraft,
+        },
+        brandId,
+        movementActorFromAuth(auth.user, auth.profile),
+      )
 
       await onRegistered()
 

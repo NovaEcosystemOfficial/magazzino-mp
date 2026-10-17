@@ -15,8 +15,12 @@ import {
   headerToDdtIdentity,
   registerDdtCarichi,
 } from '../ddt/registerDdtCarichi'
-import { loadAllArticles } from '../storage/articlesDb'
-import { findCarichiForDdtDocument } from '../storage/movementsDb'
+import { useAuth } from '../auth/AuthContext'
+import { movementActorFromAuth } from '../auth/movementActor'
+import {
+  findCarichiForDdtDocument,
+  loadAllArticles,
+} from '../storage/warehouseRepository'
 import type { ArticleRecord } from '../types/articles'
 import type { DdtEditableRow, DdtHeaderFields, DdtImportSummary } from '../types/ddt'
 import {
@@ -52,6 +56,7 @@ function isoToItalian(value: string): string {
 }
 
 export function DdtImportView({ articles, activeBrandId, onRegistered }: DdtImportViewProps) {
+  const auth = useAuth()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const savingLockRef = useRef(false)
 
@@ -365,6 +370,7 @@ export function DdtImportView({ articles, activeBrandId, onRegistered }: DdtImpo
         header,
         rows,
         brandId: selectedBrandId,
+        actor: movementActorFromAuth(auth.user, auth.profile),
       })
       await onRegistered()
       setSummary(result.summary)

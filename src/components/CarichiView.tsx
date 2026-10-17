@@ -1,4 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
+import { useAuth } from '../auth/AuthContext'
+import { movementActorFromAuth } from '../auth/movementActor'
+import type { BrandId } from '../brands/brands'
 import type { ArticleRecord } from '../types/articles'
 import type { StockMovement } from '../types/movements'
 import {
@@ -8,11 +11,12 @@ import {
   parseQuantityInput,
   todayLocalIsoDate,
 } from '../utils/quantity'
-import { registerCarico } from '../storage/movementsDb'
+import { registerCarico } from '../storage/warehouseRepository'
 
 type CarichiViewProps = {
   articles: ArticleRecord[]
   recentCarichi: StockMovement[]
+  brandId: BrandId
   onRegistered: () => Promise<void> | void
 }
 
@@ -23,7 +27,8 @@ function createIdempotencyKey(): string {
   return `carico-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
-export function CarichiView({ articles, recentCarichi, onRegistered }: CarichiViewProps) {
+export function CarichiView({ articles, recentCarichi, brandId, onRegistered }: CarichiViewProps) {
+  const auth = useAuth()
   const [search, setSearch] = useState('')
   const [selectedCode, setSelectedCode] = useState<string | null>(null)
   const [quantity, setQuantity] = useState('')
@@ -135,15 +140,19 @@ export function CarichiView({ articles, recentCarichi, onRegistered }: CarichiVi
     setError(null)
 
     try {
-      const result = await registerCarico({
-        articleCode: selectedArticle.code,
-        quantity: quantityParsed.value,
-        movementDate,
-        supplier,
-        documentRef,
-        notes,
-        idempotencyKey: idempotencyKeyRef.current,
-      })
+      const result = await registerCarico(
+        {
+          articleCode: selectedArticle.code,
+          quantity: quantityParsed.value,
+          movementDate,
+          supplier,
+          documentRef,
+          notes,
+          idempotencyKey: idempotencyKeyRef.current,
+        },
+        brandId,
+        movementActorFromAuth(auth.user, auth.profile),
+      )
 
       await onRegistered()
 
